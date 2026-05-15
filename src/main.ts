@@ -1,0 +1,1049 @@
+import './style.css';
+import {
+  ACESFilmicToneMapping,
+  BufferAttribute,
+  BufferGeometry,
+  CanvasTexture,
+  CircleGeometry,
+  Color,
+  DoubleSide,
+  GridHelper,
+  Group,
+  Line,
+  LineBasicNodeMaterial,
+  MOUSE,
+  Mesh,
+  MeshBasicMaterial,
+  PerspectiveCamera,
+  PlaneGeometry,
+  Raycaster,
+  Scene,
+  SRGBColorSpace,
+  Vector2,
+  Vector3,
+  WebGPURenderer,
+} from 'three/webgpu';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { cloneFoodPoints, createFoodPoint, createSeedFoodPoints, findFoodPointAt, removeFoodPoint } from './core/food';
+import { buildGradientColors } from './core/gradient';
+import { HistoryController } from './core/history';
+import { ParticleFlowSystem } from './core/particleFlowSystem';
+import { generateSlimePath } from './core/slimePath';
+import type { FoodPoint, FoodSettings, MaterialSettings, ParticleSettings, RuntimeSettings, SerializableAppState, SlimePathData } from './types';
+
+type UiRefs = {
+  panel: HTMLDivElement;
+  handleTop: HTMLDivElement;
+  handleBottom: HTMLDivElement;
+  collapseToggle: HTMLButtonElement;
+  webgpuWarning: HTMLDivElement;
+  start: HTMLButtonElement;
+  reset: HTMLButtonElement;
+  simulationRate: HTMLInputElement;
+  simulationRateValue: HTMLSpanElement;
+  particleAmount: HTMLInputElement;
+  particleAmountValue: HTMLSpanElement;
+  particleSize: HTMLInputElement;
+  particleSizeValue: HTMLSpanElement;
+  particleSpread: HTMLInputElement;
+  particleSpreadValue: HTMLSpanElement;
+  runtimeStats: HTMLDivElement;
+  foodRadius: HTMLInputElement;
+  foodRadiusValue: HTMLSpanElement;
+  foodStrength: HTMLInputElement;
+  foodStrengthValue: HTMLSpanElement;
+  foodStats: HTMLDivElement;
+  resetFood: HTMLButtonElement;
+  gradientStart: HTMLInputElement;
+  gradientEnd: HTMLInputElement;
+  gradientContrast: HTMLInputElement;
+  gradientContrastValue: HTMLSpanElement;
+  gradientBias: HTMLInputElement;
+  gradientBiasValue: HTMLSpanElement;
+  gradientBlur: HTMLInputElement;
+  gradientBlurValue: HTMLSpanElement;
+  trailVisible: HTMLInputElement;
+  exportScreenshot: HTMLButtonElement;
+};
+
+const EXPORT_BASE_NAME = '260515_SlimeMold';
+const GROUND_SIZE = 6;
+const FOOD_HIT_MIN_RADIUS = 0.13;
+const TRAIL_TEXTURE_SIZE = 768;
+
+function revealUiWhenStyled(maxWaitMs = 1500): void {
+  const start = performance.now();
+  const tryReveal = (): void => {
+    const styled = getComputedStyle(document.documentElement).getPropertyValue('--ui-size-scale').trim().length > 0;
+    if (styled || performance.now() - start >= maxWaitMs) {
+      document.documentElement.classList.add('ui-ready');
+      return;
+    }
+    requestAnimationFrame(tryReveal);
+  };
+  tryReveal();
+}
+
+function requiredElement<T extends Element>(id: string, check: (element: Element) => element is T): T {
+  const element = document.getElementById(id);
+  if (!element || !check(element)) {
+    throw new Error(`Required element #${id} was not found or has an unexpected type.`);
+  }
+  return element;
+}
+
+function isInput(element: Element): element is HTMLInputElement {
+  return element instanceof HTMLInputElement;
+}
+
+function isButton(element: Element): element is HTMLButtonElement {
+  return element instanceof HTMLButtonElement;
+}
+
+function isDiv(element: Element): element is HTMLDivElement {
+  return element instanceof HTMLDivElement;
+}
+
+function isSpan(element: Element): element is HTMLSpanElement {
+  return element instanceof HTMLSpanElement;
+}
+
+function updateRangeProgress(input: HTMLInputElement): void {
+  const min = Number.parseFloat(input.min);
+  const max = Number.parseFloat(input.max);
+  const value = Number.parseFloat(input.value);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min || !Number.isFinite(value)) {
+    input.style.setProperty('--range-progress', '0%');
+    return;
+  }
+  const progress = ((value - min) / (max - min)) * 100;
+  input.style.setProperty('--range-progress', `${Math.min(100, Math.max(0, progress))}%`);
+}
+
+function stepDecimals(stepValue: string): number {
+  if (!stepValue || stepValue === 'any') {
+    return 6;
+  }
+  const decimal = stepValue.split('.')[1];
+  return decimal ? decimal.length : 0;
+}
+
+function clampAndSnapInputValue(input: HTMLInputElement, value: number): number {
+  const min = Number.parseFloat(input.min);
+  const max = Number.parseFloat(input.max);
+  const step = Number.parseFloat(input.step);
+  let next = value;
+  if (Number.isFinite(min)) {
+    next = Math.max(min, next);
+  }
+  if (Number.isFinite(max)) {
+    next = Math.min(max, next);
+  }
+  if (Number.isFinite(step) && step > 0) {
+    const base = Number.isFinite(min) ? min : 0;
+    next = base + Math.round((next - base) / step) * step;
+  }
+  if (Number.isFinite(min)) {
+    next = Math.max(min, next);
+  }
+  if (Number.isFinite(max)) {
+    next = Math.min(max, next);
+  }
+  return next;
+}
+
+function setRangeValue(input: HTMLInputElement, valueLabel: HTMLSpanElement, value: number, format: (value: number) => string): void {
+  const snapped = clampAndSnapInputValue(input, value);
+  input.value = snapped.toFixed(stepDecimals(input.step));
+  valueLabel.textContent = format(snapped);
+  updateRangeProgress(input);
+}
+
+function bindRange(
+  input: HTMLInputElement,
+  valueLabel: HTMLSpanElement,
+  format: (value: number) => string,
+  onInput: (value: number) => void,
+  onCommit: () => void,
+): void {
+  const commitManualValue = (rawValue: string): void => {
+    const parsed = Number.parseFloat(rawValue);
+    if (!Number.isFinite(parsed)) {
+      setRangeValue(input, valueLabel, Number.parseFloat(input.value), format);
+      return;
+    }
+    const next = clampAndSnapInputValue(input, parsed);
+    input.value = next.toFixed(stepDecimals(input.step));
+    setRangeValue(input, valueLabel, next, format);
+    onInput(next);
+    onCommit();
+  };
+
+  let isManualEditing = false;
+  const beginManualEdit = (): void => {
+    if (isManualEditing) {
+      return;
+    }
+    isManualEditing = true;
+
+    const editor = document.createElement('input');
+    editor.type = 'number';
+    editor.className = 'value-editor';
+    editor.value = input.value;
+    editor.min = input.min;
+    editor.max = input.max;
+    editor.step = input.step;
+    valueLabel.replaceWith(editor);
+    editor.focus();
+    editor.select();
+
+    let finalized = false;
+    const finish = (commit: boolean): void => {
+      if (finalized) {
+        return;
+      }
+      finalized = true;
+      const submitted = editor.value;
+      editor.replaceWith(valueLabel);
+      isManualEditing = false;
+      if (commit) {
+        commitManualValue(submitted);
+      } else {
+        setRangeValue(input, valueLabel, Number.parseFloat(input.value), format);
+      }
+    };
+
+    editor.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    editor.addEventListener('blur', () => {
+      finish(true);
+    });
+  };
+
+  valueLabel.addEventListener('click', (event) => {
+    event.stopPropagation();
+    beginManualEdit();
+  });
+
+  input.addEventListener('input', () => {
+    const value = Number.parseFloat(input.value);
+    valueLabel.textContent = format(value);
+    updateRangeProgress(input);
+    onInput(value);
+  });
+  input.addEventListener('change', onCommit);
+  setRangeValue(input, valueLabel, Number.parseFloat(input.value), format);
+}
+
+function createPathGeometry(path: SlimePathData, colors: Float32Array): BufferGeometry {
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(path.positions, 3));
+  geometry.setAttribute('color', new BufferAttribute(colors, 3));
+  geometry.setDrawRange(0, path.pointCount);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function formatFixed(decimals: number): (value: number) => string {
+  return (value: number) => value.toFixed(decimals);
+}
+
+function formatInteger(value: number): string {
+  return `${Math.round(value)}`;
+}
+
+function formatStatsNumber(value: number): string {
+  return Math.round(value).toLocaleString('en-US');
+}
+
+function showWarning(ui: UiRefs, message: string): void {
+  ui.webgpuWarning.textContent = message;
+  ui.webgpuWarning.hidden = false;
+}
+
+const ui: UiRefs = {
+  panel: requiredElement('ui-panel', isDiv),
+  handleTop: requiredElement('ui-handle', isDiv),
+  handleBottom: requiredElement('ui-handle-bottom', isDiv),
+  collapseToggle: requiredElement('collapse-toggle', isButton),
+  webgpuWarning: requiredElement('webgpu-warning', isDiv),
+  start: requiredElement('start-sim', isButton),
+  reset: requiredElement('reset-sim', isButton),
+  simulationRate: requiredElement('simulation-rate', isInput),
+  simulationRateValue: requiredElement('simulation-rate-value', isSpan),
+  particleAmount: requiredElement('particle-amount', isInput),
+  particleAmountValue: requiredElement('particle-amount-value', isSpan),
+  particleSize: requiredElement('particle-size', isInput),
+  particleSizeValue: requiredElement('particle-size-value', isSpan),
+  particleSpread: requiredElement('particle-spread', isInput),
+  particleSpreadValue: requiredElement('particle-spread-value', isSpan),
+  runtimeStats: requiredElement('runtime-stats', isDiv),
+  foodRadius: requiredElement('food-radius', isInput),
+  foodRadiusValue: requiredElement('food-radius-value', isSpan),
+  foodStrength: requiredElement('food-strength', isInput),
+  foodStrengthValue: requiredElement('food-strength-value', isSpan),
+  foodStats: requiredElement('food-stats', isDiv),
+  resetFood: requiredElement('reset-food', isButton),
+  gradientStart: requiredElement('gradient-start-color', isInput),
+  gradientEnd: requiredElement('gradient-end-color', isInput),
+  gradientContrast: requiredElement('gradient-contrast', isInput),
+  gradientContrastValue: requiredElement('gradient-contrast-value', isSpan),
+  gradientBias: requiredElement('gradient-bias', isInput),
+  gradientBiasValue: requiredElement('gradient-bias-value', isSpan),
+  gradientBlur: requiredElement('gradient-blur', isInput),
+  gradientBlurValue: requiredElement('gradient-blur-value', isSpan),
+  trailVisible: requiredElement('trail-visible', isInput),
+  exportScreenshot: requiredElement('export-screenshot', isButton),
+};
+
+const queriedCanvas = document.querySelector<HTMLCanvasElement>('#app-canvas');
+if (!queriedCanvas) {
+  throw new Error('Required canvas #app-canvas was not found.');
+}
+const appCanvas: HTMLCanvasElement = queriedCanvas;
+
+revealUiWhenStyled();
+
+let foodPoints: FoodPoint[] = createSeedFoodPoints();
+const foodSettings: FoodSettings = {
+  radius: Number.parseFloat(ui.foodRadius.value),
+  strength: Number.parseFloat(ui.foodStrength.value),
+};
+const particleSettings: ParticleSettings = {
+  simulationRate: Number.parseFloat(ui.simulationRate.value),
+  particleAmount: Number.parseInt(ui.particleAmount.value, 10),
+  particleSize: Number.parseFloat(ui.particleSize.value),
+  particleSpread: Number.parseFloat(ui.particleSpread.value),
+};
+const materialSettings: MaterialSettings = {
+  gradientStart: ui.gradientStart.value,
+  gradientEnd: ui.gradientEnd.value,
+  gradientContrast: Number.parseFloat(ui.gradientContrast.value),
+  gradientBias: Number.parseFloat(ui.gradientBias.value),
+  gradientBlur: Number.parseFloat(ui.gradientBlur.value),
+  trailVisible: ui.trailVisible.checked,
+};
+const runtimeSettings: RuntimeSettings = {
+  running: false,
+};
+
+let history: HistoryController;
+let slimePath: SlimePathData;
+let pathColors: Float32Array;
+let pathGeometry: BufferGeometry;
+let pathLine: Line;
+let particleSystem: ParticleFlowSystem | null = null;
+let renderer: WebGPURenderer;
+let scene: Scene;
+let camera: PerspectiveCamera;
+let controls: OrbitControls;
+let foodGroup: Group;
+let trailPlane: Mesh<PlaneGeometry, MeshBasicMaterial>;
+let trailTexture: CanvasTexture;
+let draggingPanel = false;
+let particlesCleared = false;
+let pendingFoodClick: number | null = null;
+const dragOffset = { x: 0, y: 0 };
+const raycaster = new Raycaster();
+const pointerNdc = new Vector2();
+const groundPoint = new Vector3();
+let screenshotExportCount = 0;
+
+function getSerializableState(): SerializableAppState {
+  return {
+    foodPoints: cloneFoodPoints(foodPoints),
+    foodSettings: { ...foodSettings },
+    particleSettings: { ...particleSettings },
+    material: { ...materialSettings },
+  };
+}
+
+function setStartButtonState(running: boolean): void {
+  ui.start.textContent = running ? 'Pause' : 'Start';
+  ui.start.classList.toggle('is-stop-state', running);
+  ui.start.classList.toggle('is-start-state', !running);
+}
+
+function stopSimulation(): void {
+  runtimeSettings.running = false;
+  setStartButtonState(false);
+}
+
+function clearParticlesUntilStart(): void {
+  particlesCleared = true;
+  particleSystem?.setVisible(false);
+}
+
+function showParticlesForStart(): void {
+  if (!particlesCleared) {
+    return;
+  }
+  particlesCleared = false;
+  particleSystem?.setVisible(true);
+  particleSystem?.reset();
+}
+
+function updateStats(fps = 0): void {
+  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)} | Food ${foodPoints.length}`;
+  ui.foodStats.textContent = `Food points ${foodPoints.length}`;
+}
+
+function nextScreenshotName(): string {
+  screenshotExportCount += 1;
+  const serial = String(screenshotExportCount).padStart(3, '0');
+  return `${EXPORT_BASE_NAME}_${serial}.png`;
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportScreenshot(): void {
+  renderer.render(scene, camera);
+  appCanvas.toBlob((blob) => {
+    if (!blob) {
+      return;
+    }
+
+    downloadBlob(blob, nextScreenshotName());
+  }, 'image/png');
+}
+
+function worldToTrailTexture(x: number, z: number): [number, number] {
+  const half = GROUND_SIZE * 0.5;
+  return [
+    ((x + half) / GROUND_SIZE) * TRAIL_TEXTURE_SIZE,
+    ((half - z) / GROUND_SIZE) * TRAIL_TEXTURE_SIZE,
+  ];
+}
+
+function redrawTrailTexture(): void {
+  const canvas = trailTexture.image as HTMLCanvasElement;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return;
+  }
+
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = 'rgba(4, 7, 11, 0.72)';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  context.lineWidth = 1.2;
+  context.strokeStyle = 'rgba(166, 203, 255, 0.19)';
+
+  const maxSegments = Math.min(slimePath.pointCount - 1, 5200);
+  const stride = Math.max(1, Math.floor((slimePath.pointCount - 1) / maxSegments));
+  context.beginPath();
+  for (let i = 0; i < slimePath.pointCount; i += stride) {
+    const read = i * 3;
+    const [px, py] = worldToTrailTexture(slimePath.positions[read], slimePath.positions[read + 2]);
+    if (i === 0) {
+      context.moveTo(px, py);
+    } else {
+      context.lineTo(px, py);
+    }
+  }
+  context.stroke();
+
+  for (const point of foodPoints) {
+    const [x, y] = worldToTrailTexture(point.x, point.z);
+    const radius = Math.max(20, foodSettings.radius * 62);
+    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+    glow.addColorStop(0, 'rgba(255, 174, 0, 0.58)');
+    glow.addColorStop(0.45, 'rgba(177, 158, 255, 0.22)');
+    glow.addColorStop(1, 'rgba(177, 158, 255, 0)');
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  trailTexture.needsUpdate = true;
+}
+
+function rebuildFoodMeshes(): void {
+  foodGroup.traverse((object) => {
+    if (object instanceof Mesh) {
+      object.geometry.dispose();
+      if (Array.isArray(object.material)) {
+        object.material.forEach((material) => material.dispose());
+      } else {
+        object.material.dispose();
+      }
+    }
+  });
+  foodGroup.clear();
+  const dotRadius = Math.max(0.055, Math.min(0.18, foodSettings.radius * 0.28));
+  const geometry = new CircleGeometry(dotRadius, 32);
+  const material = new MeshBasicMaterial({
+    color: new Color(0xffae00),
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+  });
+
+  for (const point of foodPoints) {
+    const mesh = new Mesh(geometry, material);
+    mesh.position.set(point.x, 0.018, point.z);
+    mesh.rotation.x = -Math.PI * 0.5;
+    mesh.userData.foodId = point.id;
+    foodGroup.add(mesh);
+  }
+}
+
+function rebuildParticleSystem(): void {
+  if (!renderer || !scene || !slimePath) {
+    return;
+  }
+  particleSystem?.dispose();
+  particleSystem = new ParticleFlowSystem(
+    renderer,
+    scene,
+    slimePath,
+    pathColors,
+    particleSettings.particleAmount,
+    particleSettings.particleSize,
+    particleSettings.particleSpread,
+  );
+  particleSystem.setSimulationRate(particleSettings.simulationRate);
+  particleSystem.setVisible(!particlesCleared);
+}
+
+function rebuildSlimeField(): void {
+  slimePath = generateSlimePath(foodPoints, foodSettings);
+  pathColors = buildGradientColors(slimePath.progress, materialSettings);
+
+  if (pathLine) {
+    const nextGeometry = createPathGeometry(slimePath, pathColors);
+    pathGeometry.dispose();
+    pathGeometry = nextGeometry;
+    pathLine.geometry = pathGeometry;
+    pathLine.visible = materialSettings.trailVisible;
+  }
+
+  if (trailPlane) {
+    trailPlane.visible = materialSettings.trailVisible;
+    redrawTrailTexture();
+  }
+
+  if (foodGroup) {
+    rebuildFoodMeshes();
+  }
+
+  rebuildParticleSystem();
+  if (!runtimeSettings.running && !particlesCleared) {
+    particleSystem?.refreshPositions();
+  }
+  updateStats();
+}
+
+function commitHistoryIfChanged(): void {
+  history.commit(getSerializableState());
+  updateStats();
+}
+
+function syncStaticControlsFromState(): void {
+  setRangeValue(ui.simulationRate, ui.simulationRateValue, particleSettings.simulationRate, formatFixed(2));
+  setRangeValue(ui.particleAmount, ui.particleAmountValue, particleSettings.particleAmount, formatInteger);
+  setRangeValue(ui.particleSize, ui.particleSizeValue, particleSettings.particleSize, formatFixed(3));
+  setRangeValue(ui.particleSpread, ui.particleSpreadValue, particleSettings.particleSpread, formatFixed(3));
+  setRangeValue(ui.foodRadius, ui.foodRadiusValue, foodSettings.radius, formatFixed(2));
+  setRangeValue(ui.foodStrength, ui.foodStrengthValue, foodSettings.strength, formatFixed(2));
+  setRangeValue(ui.gradientContrast, ui.gradientContrastValue, materialSettings.gradientContrast, formatFixed(2));
+  setRangeValue(ui.gradientBias, ui.gradientBiasValue, materialSettings.gradientBias, formatFixed(2));
+  setRangeValue(ui.gradientBlur, ui.gradientBlurValue, materialSettings.gradientBlur, formatFixed(2));
+  ui.gradientStart.value = materialSettings.gradientStart;
+  ui.gradientEnd.value = materialSettings.gradientEnd;
+  ui.trailVisible.checked = materialSettings.trailVisible;
+}
+
+function applySerializableState(state: SerializableAppState): void {
+  foodPoints = cloneFoodPoints(state.foodPoints);
+  foodSettings.radius = state.foodSettings.radius;
+  foodSettings.strength = state.foodSettings.strength;
+  particleSettings.simulationRate = state.particleSettings.simulationRate;
+  particleSettings.particleAmount = state.particleSettings.particleAmount;
+  particleSettings.particleSize = state.particleSettings.particleSize;
+  particleSettings.particleSpread = state.particleSettings.particleSpread;
+  materialSettings.gradientStart = state.material.gradientStart;
+  materialSettings.gradientEnd = state.material.gradientEnd;
+  materialSettings.gradientContrast = state.material.gradientContrast;
+  materialSettings.gradientBias = state.material.gradientBias;
+  materialSettings.gradientBlur = state.material.gradientBlur;
+  materialSettings.trailVisible = state.material.trailVisible;
+  syncStaticControlsFromState();
+  rebuildSlimeField();
+}
+
+function bindSectionCollapseToggles(): void {
+  const headers = ui.panel.querySelectorAll<HTMLDivElement>('.panel-section-header');
+  headers.forEach((header) => {
+    const section = header.closest('.panel-section');
+    if (!section) {
+      return;
+    }
+
+    header.setAttribute('role', 'button');
+    header.setAttribute('tabindex', '0');
+    header.setAttribute('aria-expanded', section.classList.contains('is-collapsed') ? 'false' : 'true');
+
+    const toggle = (): void => {
+      const collapsed = section.classList.toggle('is-collapsed');
+      header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+
+    header.addEventListener('click', toggle);
+    header.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggle();
+      }
+    });
+  });
+}
+
+function clampPanelToViewport(): void {
+  if (window.innerWidth <= 700) {
+    ui.panel.style.left = '';
+    ui.panel.style.top = '';
+    return;
+  }
+
+  const panelRect = ui.panel.getBoundingClientRect();
+  const width = panelRect.width;
+  const height = panelRect.height;
+  const maxLeft = Math.max(12, window.innerWidth - width - 12);
+  const maxTop = Math.max(12, window.innerHeight - height - 12);
+  ui.panel.style.left = `${Math.min(maxLeft, Math.max(12, panelRect.left))}px`;
+  ui.panel.style.top = `${Math.min(maxTop, Math.max(12, panelRect.top))}px`;
+  ui.panel.style.right = 'auto';
+  ui.panel.style.bottom = 'auto';
+}
+
+function bindPanelDrag(): void {
+  const beginPanelDrag = (event: PointerEvent): void => {
+    if (event.target instanceof Element && event.target.closest('.collapse-button')) {
+      return;
+    }
+    draggingPanel = true;
+    const rect = ui.panel.getBoundingClientRect();
+    ui.panel.style.left = `${rect.left}px`;
+    ui.panel.style.top = `${rect.top}px`;
+    ui.panel.style.right = 'auto';
+    ui.panel.style.bottom = 'auto';
+    dragOffset.x = event.clientX - rect.left;
+    dragOffset.y = event.clientY - rect.top;
+  };
+
+  ui.handleTop.addEventListener('pointerdown', beginPanelDrag);
+  ui.handleBottom.addEventListener('pointerdown', beginPanelDrag);
+  window.addEventListener('pointermove', (event) => {
+    if (!draggingPanel) {
+      return;
+    }
+    ui.panel.style.left = `${event.clientX - dragOffset.x}px`;
+    ui.panel.style.top = `${event.clientY - dragOffset.y}px`;
+    clampPanelToViewport();
+  });
+  window.addEventListener('pointerup', () => {
+    draggingPanel = false;
+  });
+  window.addEventListener('pointercancel', () => {
+    draggingPanel = false;
+  });
+}
+
+function bindStaticControls(): void {
+  bindRange(
+    ui.simulationRate,
+    ui.simulationRateValue,
+    formatFixed(2),
+    (value) => {
+      particleSettings.simulationRate = value;
+      particleSystem?.setSimulationRate(value);
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.particleAmount,
+    ui.particleAmountValue,
+    formatInteger,
+    (value) => {
+      particleSettings.particleAmount = Math.round(value);
+      updateStats();
+    },
+    () => {
+      const wasRunning = runtimeSettings.running;
+      stopSimulation();
+      rebuildParticleSystem();
+      runtimeSettings.running = wasRunning;
+      setStartButtonState(wasRunning);
+      commitHistoryIfChanged();
+    },
+  );
+  bindRange(
+    ui.particleSize,
+    ui.particleSizeValue,
+    formatFixed(3),
+    (value) => {
+      particleSettings.particleSize = value;
+      particleSystem?.setParticleSize(value);
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.particleSpread,
+    ui.particleSpreadValue,
+    formatFixed(3),
+    (value) => {
+      particleSettings.particleSpread = value;
+      particleSystem?.setParticleSpread(value);
+      if (!runtimeSettings.running) {
+        particleSystem?.refreshPositions();
+      }
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.foodRadius,
+    ui.foodRadiusValue,
+    formatFixed(2),
+    (value) => {
+      foodSettings.radius = value;
+      rebuildSlimeField();
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.foodStrength,
+    ui.foodStrengthValue,
+    formatFixed(2),
+    (value) => {
+      foodSettings.strength = value;
+      rebuildSlimeField();
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.gradientContrast,
+    ui.gradientContrastValue,
+    formatFixed(2),
+    (value) => {
+      materialSettings.gradientContrast = value;
+      rebuildSlimeField();
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.gradientBias,
+    ui.gradientBiasValue,
+    formatFixed(2),
+    (value) => {
+      materialSettings.gradientBias = value;
+      rebuildSlimeField();
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.gradientBlur,
+    ui.gradientBlurValue,
+    formatFixed(2),
+    (value) => {
+      materialSettings.gradientBlur = value;
+      rebuildSlimeField();
+    },
+    commitHistoryIfChanged,
+  );
+
+  ui.gradientStart.addEventListener('input', () => {
+    materialSettings.gradientStart = ui.gradientStart.value;
+    rebuildSlimeField();
+  });
+  ui.gradientStart.addEventListener('change', commitHistoryIfChanged);
+  ui.gradientEnd.addEventListener('input', () => {
+    materialSettings.gradientEnd = ui.gradientEnd.value;
+    rebuildSlimeField();
+  });
+  ui.gradientEnd.addEventListener('change', commitHistoryIfChanged);
+  ui.trailVisible.addEventListener('change', () => {
+    materialSettings.trailVisible = ui.trailVisible.checked;
+    pathLine.visible = materialSettings.trailVisible;
+    trailPlane.visible = materialSettings.trailVisible;
+    commitHistoryIfChanged();
+  });
+
+  ui.start.addEventListener('click', () => {
+    const shouldRun = !runtimeSettings.running;
+    if (shouldRun) {
+      showParticlesForStart();
+    }
+    runtimeSettings.running = shouldRun;
+    setStartButtonState(runtimeSettings.running);
+  });
+  ui.reset.addEventListener('click', () => {
+    stopSimulation();
+    particleSystem?.reset();
+    clearParticlesUntilStart();
+  });
+  ui.resetFood.addEventListener('click', () => {
+    foodPoints = createSeedFoodPoints();
+    rebuildSlimeField();
+    commitHistoryIfChanged();
+  });
+  ui.exportScreenshot.addEventListener('click', exportScreenshot);
+  ui.collapseToggle.addEventListener('pointerdown', (event) => {
+    event.stopPropagation();
+  });
+  ui.collapseToggle.addEventListener('click', () => {
+    const collapsed = ui.panel.classList.toggle('is-collapsed');
+    ui.collapseToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  });
+}
+
+function bindHistoryShortcuts(): void {
+  window.addEventListener('keydown', (event) => {
+    if (document.activeElement instanceof HTMLInputElement && document.activeElement.classList.contains('value-editor')) {
+      return;
+    }
+    const key = event.key.toLowerCase();
+    const undoRequested = event.ctrlKey && key === 'z' && !event.shiftKey;
+    const redoRequested = event.ctrlKey && (key === 'y' || (key === 'z' && event.shiftKey));
+    if (!undoRequested && !redoRequested) {
+      return;
+    }
+    event.preventDefault();
+    const state = undoRequested ? history.undo() : history.redo();
+    if (state) {
+      applySerializableState(state);
+    }
+  });
+}
+
+function getCanvasGroundPoint(event: MouseEvent): Vector3 | null {
+  const rect = appCanvas.getBoundingClientRect();
+  pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointerNdc, camera);
+  const directionY = raycaster.ray.direction.y;
+  if (Math.abs(directionY) < 1e-6) {
+    return null;
+  }
+  const t = -raycaster.ray.origin.y / directionY;
+  if (t < 0) {
+    return null;
+  }
+  groundPoint.copy(raycaster.ray.origin).addScaledVector(raycaster.ray.direction, t);
+  return groundPoint;
+}
+
+function addFoodAt(point: Vector3): void {
+  const half = GROUND_SIZE * 0.5;
+  const x = Math.min(half, Math.max(-half, point.x));
+  const z = Math.min(half, Math.max(-half, point.z));
+  foodPoints = [...foodPoints, createFoodPoint(x, z)];
+  rebuildSlimeField();
+  commitHistoryIfChanged();
+}
+
+function deleteFoodAt(point: Vector3): void {
+  const hitRadius = Math.max(FOOD_HIT_MIN_RADIUS, foodSettings.radius * 0.42);
+  const hit = findFoodPointAt(foodPoints, point.x, point.z, hitRadius);
+  if (!hit) {
+    return;
+  }
+  foodPoints = removeFoodPoint(foodPoints, hit.id);
+  rebuildSlimeField();
+  commitHistoryIfChanged();
+}
+
+function bindFoodCanvasEditing(): void {
+  appCanvas.addEventListener('click', (event) => {
+    if (event.button !== 0 || event.detail !== 1) {
+      return;
+    }
+    const point = getCanvasGroundPoint(event)?.clone();
+    if (!point) {
+      return;
+    }
+    if (pendingFoodClick !== null) {
+      window.clearTimeout(pendingFoodClick);
+    }
+    pendingFoodClick = window.setTimeout(() => {
+      addFoodAt(point);
+      pendingFoodClick = null;
+    }, 230);
+  });
+
+  appCanvas.addEventListener('dblclick', (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    if (pendingFoodClick !== null) {
+      window.clearTimeout(pendingFoodClick);
+      pendingFoodClick = null;
+    }
+    const point = getCanvasGroundPoint(event);
+    if (point) {
+      deleteFoodAt(point);
+    }
+  });
+}
+
+function handleResize(camera: PerspectiveCamera): void {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio * 1.5, 3));
+  renderer.setSize(width, height);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  clampPanelToViewport();
+}
+
+function createTrailTexture(): CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = TRAIL_TEXTURE_SIZE;
+  canvas.height = TRAIL_TEXTURE_SIZE;
+  const texture = new CanvasTexture(canvas);
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
+
+async function initApp(): Promise<void> {
+  if (!('gpu' in navigator)) {
+    showWarning(ui, 'WebGPU is required for this project. Open it in a current Chromium-based browser with WebGPU enabled.');
+    return;
+  }
+
+  scene = new Scene();
+  scene.background = new Color(0x030407);
+
+  camera = new PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.01, 100);
+  camera.position.set(0, 4.8, 4.9);
+  camera.lookAt(0, 0, 0);
+
+  renderer = new WebGPURenderer({ antialias: true, canvas: appCanvas });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio * 1.5, 3));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = SRGBColorSpace;
+  renderer.toneMapping = ACESFilmicToneMapping;
+  await renderer.init();
+
+  const backend = renderer.backend as { isWebGPUBackend?: boolean };
+  if (!backend.isWebGPUBackend) {
+    throw new Error('Strict WebGPU mode is required, but Three.js initialized a fallback backend.');
+  }
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.enablePan = true;
+  controls.enableZoom = true;
+  controls.target.set(0, 0, 0);
+  controls.minPolarAngle = 0.05;
+  controls.maxPolarAngle = Math.PI * 0.49;
+  controls.mouseButtons = {
+    LEFT: -1 as unknown as MOUSE,
+    MIDDLE: MOUSE.PAN,
+    RIGHT: MOUSE.ROTATE,
+  };
+  controls.update();
+
+  renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
+  window.addEventListener('contextmenu', (event) => event.preventDefault());
+
+  slimePath = generateSlimePath(foodPoints, foodSettings);
+  pathColors = buildGradientColors(slimePath.progress, materialSettings);
+  pathGeometry = createPathGeometry(slimePath, pathColors);
+  const pathMaterial = new LineBasicNodeMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.54,
+  });
+  pathLine = new Line(pathGeometry, pathMaterial);
+  pathLine.frustumCulled = false;
+  pathLine.visible = materialSettings.trailVisible;
+  scene.add(pathLine);
+
+  trailTexture = createTrailTexture();
+  const trailMaterial = new MeshBasicMaterial({
+    map: trailTexture,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  trailPlane = new Mesh(new PlaneGeometry(GROUND_SIZE, GROUND_SIZE), trailMaterial);
+  trailPlane.rotation.x = -Math.PI * 0.5;
+  trailPlane.position.y = -0.012;
+  trailPlane.visible = materialSettings.trailVisible;
+  scene.add(trailPlane);
+
+  const groundGrid = new GridHelper(GROUND_SIZE, 24, 0x27473f, 0x121f1d);
+  groundGrid.position.y = -0.006;
+  scene.add(groundGrid);
+
+  foodGroup = new Group();
+  scene.add(foodGroup);
+
+  history = new HistoryController(getSerializableState());
+  bindSectionCollapseToggles();
+  bindPanelDrag();
+  bindStaticControls();
+  bindHistoryShortcuts();
+  bindFoodCanvasEditing();
+  syncStaticControlsFromState();
+  rebuildFoodMeshes();
+  redrawTrailTexture();
+  rebuildParticleSystem();
+  setStartButtonState(false);
+  updateStats();
+  renderer.render(scene, camera);
+
+  window.addEventListener('resize', () => handleResize(camera));
+  handleResize(camera);
+
+  let lastTime = performance.now();
+  let fpsAccumulator = 0;
+  let fpsFrames = 0;
+  let fpsValue = 0;
+
+  renderer.setAnimationLoop((now) => {
+    const delta = Math.min((now - lastTime) / 1000, 0.05);
+    lastTime = now;
+    controls.update();
+
+    if (runtimeSettings.running) {
+      particleSystem?.step(delta, particleSettings.simulationRate);
+    }
+
+    fpsAccumulator += delta;
+    fpsFrames += 1;
+    if (fpsAccumulator >= 0.25) {
+      fpsValue = fpsFrames / fpsAccumulator;
+      fpsAccumulator = 0;
+      fpsFrames = 0;
+      updateStats(fpsValue);
+    }
+
+    renderer.render(scene, camera);
+  });
+}
+
+void initApp().catch((error: unknown) => {
+  console.error(error);
+  showWarning(ui, error instanceof Error ? error.message : 'Unable to initialize the WebGPU slime mold simulation.');
+});
