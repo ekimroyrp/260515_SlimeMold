@@ -3,14 +3,16 @@ import type { SerializableAppState } from '../types';
 function cloneState(state: SerializableAppState): SerializableAppState {
   return {
     foodPoints: state.foodPoints.map((point) => ({ ...point })),
+    sourcePoints: state.sourcePoints.map((point) => ({ ...point })),
     foodSettings: { ...state.foodSettings },
+    sourceSettings: { ...state.sourceSettings },
     particleSettings: { ...state.particleSettings },
     material: { ...state.material },
   };
 }
 
 function stateKey(state: SerializableAppState): string {
-  return JSON.stringify(state);
+  return JSON.stringify(cloneState(state));
 }
 
 export class HistoryController {

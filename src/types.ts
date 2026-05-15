@@ -6,7 +6,18 @@ export type FoodPoint = {
   z: number;
 };
 
+export type SourcePoint = {
+  id: string;
+  x: number;
+  z: number;
+};
+
 export type FoodSettings = {
+  radius: number;
+  strength: number;
+};
+
+export type SourceSettings = {
   radius: number;
   strength: number;
 };
@@ -15,7 +26,7 @@ export type ParticleSettings = {
   simulationRate: number;
   particleAmount: number;
   particleSize: number;
-  particleSpread: number;
+  boundary: number;
 };
 
 export type MaterialSettings = {
@@ -24,7 +35,10 @@ export type MaterialSettings = {
   gradientContrast: number;
   gradientBias: number;
   gradientBlur: number;
+  particleVisible: boolean;
   trailVisible: boolean;
+  hideSource: boolean;
+  hideFood: boolean;
 };
 
 export type RuntimeSettings = {
@@ -33,7 +47,9 @@ export type RuntimeSettings = {
 
 export type SerializableAppState = {
   foodPoints: FoodPoint[];
+  sourcePoints: SourcePoint[];
   foodSettings: FoodSettings;
+  sourceSettings: SourceSettings;
   particleSettings: ParticleSettings;
   material: MaterialSettings;
 };

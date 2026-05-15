@@ -12,7 +12,9 @@ import {
   Scene,
   Vector3,
 } from 'three/webgpu';
+import { getSourceFoodBlend } from './colorField';
 import type { PhysarumSimulation } from './physarum';
+import type { FoodPoint, MaterialSettings, SourcePoint } from '../types';
 
 const BASE_OPACITY_AMOUNT = 26000;
 const BASE_PARTICLE_OPACITY = 0.12;
@@ -53,6 +55,9 @@ export class ParticleFlowSystem {
   private readonly position = new Vector3();
   private readonly rotation = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI * 0.5);
   private readonly scale = new Vector3();
+  private readonly particleColor = new Color();
+  private readonly gradientStart = new Color();
+  private readonly gradientEnd = new Color();
   private particleSize: number;
 
   constructor(scene: Scene, amount: number, particleSize: number) {
@@ -66,12 +71,13 @@ export class ParticleFlowSystem {
     this.dotTexture = createParticleDotTexture();
     this.material = new MeshBasicMaterial({
       blending: AdditiveBlending,
-      color: new Color(0xffcf45),
+      color: new Color(0xffffff),
       depthWrite: false,
       map: this.dotTexture,
       opacity: getParticleOpacityForAmount(this.amount),
       side: DoubleSide,
       transparent: true,
+      vertexColors: true,
     });
 
     this.object = new InstancedMesh(this.geometry, this.material, this.amount);
@@ -90,26 +96,25 @@ export class ParticleFlowSystem {
 
   setParticleSize(value: number): void {
     this.particleSize = value;
-    this.updateInstanceMatrices();
-  }
-
-  setParticleSpread(_value: number): void {
-    // Spread is represented by the live agent distribution.
+    this.updateInstanceMatrices([], [], null);
   }
 
   setVisible(visible: boolean): void {
     this.object.visible = visible;
   }
 
-  updateFromSimulation(simulation: PhysarumSimulation): void {
+  updateFromSimulation(
+    simulation: PhysarumSimulation,
+    sourcePoints: SourcePoint[],
+    foodPoints: FoodPoint[],
+    materialSettings: MaterialSettings,
+  ): void {
     simulation.writeAgentPositions(this.positions, PARTICLE_Y);
-    this.updateInstanceMatrices();
+    this.updateInstanceMatrices(sourcePoints, foodPoints, materialSettings);
   }
 
-  reset(simulation?: PhysarumSimulation): void {
-    if (simulation) {
-      this.updateFromSimulation(simulation);
-    }
+  reset(simulation: PhysarumSimulation, sourcePoints: SourcePoint[], foodPoints: FoodPoint[], materialSettings: MaterialSettings): void {
+    this.updateFromSimulation(simulation, sourcePoints, foodPoints, materialSettings);
   }
 
   step(_deltaSeconds: number, _simulationRate: number): void {
@@ -123,14 +128,29 @@ export class ParticleFlowSystem {
     this.material.dispose();
   }
 
-  private updateInstanceMatrices(): void {
+  private updateInstanceMatrices(sourcePoints: SourcePoint[], foodPoints: FoodPoint[], materialSettings: MaterialSettings | null): void {
     this.scale.setScalar(this.particleSize);
+    if (materialSettings) {
+      this.gradientStart.set(materialSettings.gradientStart);
+      this.gradientEnd.set(materialSettings.gradientEnd);
+    }
     for (let i = 0; i < this.amount; i += 1) {
       const read = i * 3;
-      this.position.set(this.positions[read], this.positions[read + 1], this.positions[read + 2]);
+      const x = this.positions[read];
+      const y = this.positions[read + 1];
+      const z = this.positions[read + 2];
+      this.position.set(x, y, z);
       this.matrix.compose(this.position, this.rotation, this.scale);
       this.object.setMatrixAt(i, this.matrix);
+      if (materialSettings) {
+        const blend = getSourceFoodBlend(x, z, sourcePoints, foodPoints);
+        this.particleColor.copy(this.gradientStart).lerp(this.gradientEnd, blend);
+        this.object.setColorAt(i, this.particleColor);
+      }
     }
     this.object.instanceMatrix.needsUpdate = true;
+    if (this.object.instanceColor) {
+      this.object.instanceColor.needsUpdate = true;
+    }
   }
 }

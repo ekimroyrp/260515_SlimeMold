@@ -1,4 +1,5 @@
-import type { FoodPoint, FoodSettings, MaterialSettings } from '../types';
+import { clamp01, getSourceFoodBlend, interpolateRgb, parseHexColor } from './colorField';
+import type { FoodPoint, FoodSettings, MaterialSettings, SourcePoint, SourceSettings } from '../types';
 
 export type PhysarumOptions = {
   agentCount: number;
@@ -31,19 +32,6 @@ function createRandom(seed: number): () => number {
   };
 }
 
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
-
-function parseHexColor(hex: string): [number, number, number] {
-  const value = hex.startsWith('#') ? hex.slice(1) : hex;
-  const numeric = Number.parseInt(value.length === 3 ? value.replace(/(.)/g, '$1$1') : value, 16);
-  if (!Number.isFinite(numeric)) {
-    return [255, 255, 255];
-  }
-  return [(numeric >> 16) & 255, (numeric >> 8) & 255, numeric & 255];
-}
-
 function wrapIndex(value: number, size: number): number {
   let next = value % size;
   if (next < 0) {
@@ -63,6 +51,7 @@ export class PhysarumSimulation {
   private readonly trail: Float32Array;
   private readonly nextTrail: Float32Array;
   private readonly random: () => number;
+  private emissionCursor = 0;
   private stats: PhysarumStats = { activeCells: 0, averageTrail: 0 };
 
   constructor(options: PhysarumOptions) {
@@ -91,34 +80,36 @@ export class PhysarumSimulation {
     }
   }
 
-  reset(foodPoints: FoodPoint[]): void {
+  reset(sourcePoints: SourcePoint[], sourceSettings: SourceSettings): void {
     this.trail.fill(0);
-    const half = this.groundSize * 0.5;
     for (let i = 0; i < this.agentCount; i += 1) {
-      const anchor = foodPoints.length > 0 ? foodPoints[i % foodPoints.length] : null;
-      const angle = this.random() * TWO_PI;
-      const radius = anchor ? 0.08 + this.random() * 0.56 : this.random() * half * 0.92;
-      const centerX = anchor?.x ?? 0;
-      const centerZ = anchor?.z ?? 0;
-      this.agentX[i] = Math.min(half, Math.max(-half, centerX + Math.cos(angle) * radius));
-      this.agentZ[i] = Math.min(half, Math.max(-half, centerZ + Math.sin(angle) * radius));
-      this.agentAngle[i] = anchor ? Math.atan2(-Math.sin(angle), -Math.cos(angle)) : angle;
-      this.deposit(this.agentX[i], this.agentZ[i], DEPOSIT_AMOUNT * 1.6);
+      const anchor = sourcePoints.length > 0 ? sourcePoints[i % sourcePoints.length] : null;
+      this.placeAgentAtSource(i, anchor, sourceSettings);
+      this.deposit(this.agentX[i], this.agentZ[i], DEPOSIT_AMOUNT * Math.max(0.2, sourceSettings.strength) * 1.6);
     }
+    this.emissionCursor = 0;
     this.diffuseAndDecay();
   }
 
-  step(deltaSeconds: number, foodPoints: FoodPoint[], foodSettings: FoodSettings, speedScale: number): void {
+  step(
+    deltaSeconds: number,
+    sourcePoints: SourcePoint[],
+    sourceSettings: SourceSettings,
+    foodPoints: FoodPoint[],
+    foodSettings: FoodSettings,
+    speedScale: number,
+  ): void {
     const dt = Math.min(1 / 20, Math.max(1 / 240, deltaSeconds));
     const substeps = Math.max(1, Math.min(4, Math.ceil(dt * 90 * Math.max(0.5, speedScale))));
     const stepDt = dt / substeps;
     for (let i = 0; i < substeps; i += 1) {
+      this.emitFromSources(stepDt, sourcePoints, sourceSettings);
       this.stepAgents(stepDt, foodPoints, foodSettings, speedScale);
       this.diffuseAndDecay();
     }
   }
 
-  paintToCanvas(canvas: HTMLCanvasElement, material: MaterialSettings): PhysarumStats {
+  paintToCanvas(canvas: HTMLCanvasElement, material: MaterialSettings, sourcePoints: SourcePoint[], foodPoints: FoodPoint[]): PhysarumStats {
     if (canvas.width !== this.gridSize || canvas.height !== this.gridSize) {
       canvas.width = this.gridSize;
       canvas.height = this.gridSize;
@@ -132,6 +123,7 @@ export class PhysarumSimulation {
     const image = context.createImageData(this.gridSize, this.gridSize);
     const start = parseHexColor(material.gradientStart);
     const end = parseHexColor(material.gradientEnd);
+    const half = this.groundSize * 0.5;
     let activeCells = 0;
     let sum = 0;
 
@@ -141,10 +133,14 @@ export class PhysarumSimulation {
         const raw = this.trail[read];
         const t = clamp01(raw * material.gradientContrast + material.gradientBias + 0.2);
         const glow = Math.pow(t, 0.72);
+        const worldX = (x / Math.max(1, this.gridSize - 1)) * this.groundSize - half;
+        const worldZ = (y / Math.max(1, this.gridSize - 1)) * this.groundSize - half;
+        const blend = getSourceFoodBlend(worldX, worldZ, sourcePoints, foodPoints);
+        const color = interpolateRgb(start, end, blend);
         const write = read * 4;
-        image.data[write] = Math.round(4 + (start[0] + (end[0] - start[0]) * glow) * glow);
-        image.data[write + 1] = Math.round(7 + (start[1] + (end[1] - start[1]) * glow) * glow);
-        image.data[write + 2] = Math.round(12 + (start[2] + (end[2] - start[2]) * glow) * glow);
+        image.data[write] = Math.round(4 + color[0] * glow);
+        image.data[write + 1] = Math.round(7 + color[1] * glow);
+        image.data[write + 2] = Math.round(12 + color[2] * glow);
         image.data[write + 3] = 255;
         if (raw > 0.05) {
           activeCells += 1;
@@ -159,6 +155,33 @@ export class PhysarumSimulation {
       averageTrail: sum / this.trail.length,
     };
     return this.getTrailStats();
+  }
+
+  private placeAgentAtSource(index: number, source: SourcePoint | null, sourceSettings: SourceSettings): void {
+    const half = this.groundSize * 0.5;
+    const angle = this.random() * TWO_PI;
+    const radius = source
+      ? Math.max(0.01, sourceSettings.radius) * (0.12 + this.random() * 0.72)
+      : this.random() * half * 0.16;
+    const centerX = source?.x ?? 0;
+    const centerZ = source?.z ?? 0;
+    this.agentX[index] = Math.min(half, Math.max(-half, centerX + Math.cos(angle) * radius));
+    this.agentZ[index] = Math.min(half, Math.max(-half, centerZ + Math.sin(angle) * radius));
+    this.agentAngle[index] = angle;
+  }
+
+  private emitFromSources(deltaSeconds: number, sourcePoints: SourcePoint[], sourceSettings: SourceSettings): void {
+    if (sourcePoints.length === 0 || sourceSettings.strength <= 0) {
+      return;
+    }
+    const emitCount = Math.min(this.agentCount, Math.max(1, Math.round(this.agentCount * deltaSeconds * 0.018 * sourceSettings.strength)));
+    for (let i = 0; i < emitCount; i += 1) {
+      const agentIndex = this.emissionCursor % this.agentCount;
+      const source = sourcePoints[this.emissionCursor % sourcePoints.length];
+      this.placeAgentAtSource(agentIndex, source, sourceSettings);
+      this.deposit(this.agentX[agentIndex], this.agentZ[agentIndex], DEPOSIT_AMOUNT * sourceSettings.strength);
+      this.emissionCursor += 1;
+    }
   }
 
   private stepAgents(deltaSeconds: number, foodPoints: FoodPoint[], foodSettings: FoodSettings, speedScale: number): void {
