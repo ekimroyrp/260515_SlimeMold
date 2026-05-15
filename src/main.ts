@@ -1,16 +1,12 @@
 import './style.css';
 import {
   ACESFilmicToneMapping,
-  BufferAttribute,
-  BufferGeometry,
   CanvasTexture,
   CircleGeometry,
   Color,
   DoubleSide,
   GridHelper,
   Group,
-  Line,
-  LineBasicNodeMaterial,
   MOUSE,
   Mesh,
   MeshBasicMaterial,
@@ -25,11 +21,10 @@ import {
 } from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { cloneFoodPoints, createFoodPoint, createSeedFoodPoints, findFoodPointAt, removeFoodPoint } from './core/food';
-import { buildGradientColors } from './core/gradient';
 import { HistoryController } from './core/history';
 import { ParticleFlowSystem } from './core/particleFlowSystem';
-import { generateSlimePath } from './core/slimePath';
-import type { FoodPoint, FoodSettings, MaterialSettings, ParticleSettings, RuntimeSettings, SerializableAppState, SlimePathData } from './types';
+import { PhysarumSimulation } from './core/physarum';
+import type { FoodPoint, FoodSettings, MaterialSettings, ParticleSettings, RuntimeSettings, SerializableAppState } from './types';
 
 type UiRefs = {
   panel: HTMLDivElement;
@@ -69,7 +64,7 @@ type UiRefs = {
 const EXPORT_BASE_NAME = '260515_SlimeMold';
 const GROUND_SIZE = 6;
 const FOOD_HIT_MIN_RADIUS = 0.13;
-const TRAIL_TEXTURE_SIZE = 768;
+const PHYSARUM_GRID_SIZE = 192;
 
 function revealUiWhenStyled(maxWaitMs = 1500): void {
   const start = performance.now();
@@ -242,15 +237,6 @@ function bindRange(
   setRangeValue(input, valueLabel, Number.parseFloat(input.value), format);
 }
 
-function createPathGeometry(path: SlimePathData, colors: Float32Array): BufferGeometry {
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(path.positions, 3));
-  geometry.setAttribute('color', new BufferAttribute(colors, 3));
-  geometry.setDrawRange(0, path.pointCount);
-  geometry.computeBoundingSphere();
-  return geometry;
-}
-
 function formatFixed(decimals: number): (value: number) => string {
   return (value: number) => value.toFixed(decimals);
 }
@@ -335,10 +321,6 @@ const runtimeSettings: RuntimeSettings = {
 };
 
 let history: HistoryController;
-let slimePath: SlimePathData;
-let pathColors: Float32Array;
-let pathGeometry: BufferGeometry;
-let pathLine: Line;
 let particleSystem: ParticleFlowSystem | null = null;
 let renderer: WebGPURenderer;
 let scene: Scene;
@@ -347,6 +329,7 @@ let controls: OrbitControls;
 let foodGroup: Group;
 let trailPlane: Mesh<PlaneGeometry, MeshBasicMaterial>;
 let trailTexture: CanvasTexture;
+let trailSimulation: PhysarumSimulation | null = null;
 let draggingPanel = false;
 let particlesCleared = false;
 let pendingFoodClick: number | null = null;
@@ -387,11 +370,15 @@ function showParticlesForStart(): void {
   }
   particlesCleared = false;
   particleSystem?.setVisible(true);
-  particleSystem?.reset();
+  if (trailSimulation) {
+    particleSystem?.reset(trailSimulation);
+  }
 }
 
 function updateStats(fps = 0): void {
-  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)} | Food ${foodPoints.length}`;
+  const trailStats = trailSimulation?.getTrailStats();
+  const activeCells = trailStats ? ` | Map ${formatStatsNumber(trailStats.activeCells)}` : '';
+  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)}${activeCells}`;
   ui.foodStats.textContent = `Food points ${foodPoints.length}`;
 }
 
@@ -424,9 +411,24 @@ function exportScreenshot(): void {
 function worldToTrailTexture(x: number, z: number): [number, number] {
   const half = GROUND_SIZE * 0.5;
   return [
-    ((x + half) / GROUND_SIZE) * TRAIL_TEXTURE_SIZE,
-    ((half - z) / GROUND_SIZE) * TRAIL_TEXTURE_SIZE,
+    ((x + half) / GROUND_SIZE) * PHYSARUM_GRID_SIZE,
+    ((z + half) / GROUND_SIZE) * PHYSARUM_GRID_SIZE,
   ];
+}
+
+function drawFoodGlows(context: CanvasRenderingContext2D): void {
+  for (const point of foodPoints) {
+    const [x, y] = worldToTrailTexture(point.x, point.z);
+    const radius = Math.max(9, foodSettings.radius * 28);
+    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
+    glow.addColorStop(0, 'rgba(255, 174, 0, 0.78)');
+    glow.addColorStop(0.34, 'rgba(177, 158, 255, 0.28)');
+    glow.addColorStop(1, 'rgba(177, 158, 255, 0)');
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
 }
 
 function redrawTrailTexture(): void {
@@ -436,42 +438,8 @@ function redrawTrailTexture(): void {
     return;
   }
 
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = 'rgba(4, 7, 11, 0.72)';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-
-  context.lineCap = 'round';
-  context.lineJoin = 'round';
-  context.lineWidth = 1.2;
-  context.strokeStyle = 'rgba(166, 203, 255, 0.19)';
-
-  const maxSegments = Math.min(slimePath.pointCount - 1, 5200);
-  const stride = Math.max(1, Math.floor((slimePath.pointCount - 1) / maxSegments));
-  context.beginPath();
-  for (let i = 0; i < slimePath.pointCount; i += stride) {
-    const read = i * 3;
-    const [px, py] = worldToTrailTexture(slimePath.positions[read], slimePath.positions[read + 2]);
-    if (i === 0) {
-      context.moveTo(px, py);
-    } else {
-      context.lineTo(px, py);
-    }
-  }
-  context.stroke();
-
-  for (const point of foodPoints) {
-    const [x, y] = worldToTrailTexture(point.x, point.z);
-    const radius = Math.max(20, foodSettings.radius * 62);
-    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
-    glow.addColorStop(0, 'rgba(255, 174, 0, 0.58)');
-    glow.addColorStop(0.45, 'rgba(177, 158, 255, 0.22)');
-    glow.addColorStop(1, 'rgba(177, 158, 255, 0)');
-    context.fillStyle = glow;
-    context.beginPath();
-    context.arc(x, y, radius, 0, Math.PI * 2);
-    context.fill();
-  }
-
+  trailSimulation?.paintToCanvas(canvas, materialSettings);
+  drawFoodGlows(context);
   trailTexture.needsUpdate = true;
 }
 
@@ -506,33 +474,20 @@ function rebuildFoodMeshes(): void {
 }
 
 function rebuildParticleSystem(): void {
-  if (!renderer || !scene || !slimePath) {
+  if (!scene || !trailSimulation) {
     return;
   }
   particleSystem?.dispose();
-  particleSystem = new ParticleFlowSystem(
-    renderer,
-    scene,
-    slimePath,
-    pathColors,
-    particleSettings.particleAmount,
-    particleSettings.particleSize,
-    particleSettings.particleSpread,
-  );
+  particleSystem = new ParticleFlowSystem(scene, trailSimulation.agentCount, particleSettings.particleSize);
   particleSystem.setSimulationRate(particleSettings.simulationRate);
+  particleSystem.setParticleSpread(particleSettings.particleSpread);
+  particleSystem.updateFromSimulation(trailSimulation);
   particleSystem.setVisible(!particlesCleared);
 }
 
-function rebuildSlimeField(): void {
-  slimePath = generateSlimePath(foodPoints, foodSettings);
-  pathColors = buildGradientColors(slimePath.progress, materialSettings);
-
-  if (pathLine) {
-    const nextGeometry = createPathGeometry(slimePath, pathColors);
-    pathGeometry.dispose();
-    pathGeometry = nextGeometry;
-    pathLine.geometry = pathGeometry;
-    pathLine.visible = materialSettings.trailVisible;
+function rebuildSlimeField(resetTrail = true): void {
+  if (resetTrail) {
+    trailSimulation?.reset(foodPoints);
   }
 
   if (trailPlane) {
@@ -544,9 +499,16 @@ function rebuildSlimeField(): void {
     rebuildFoodMeshes();
   }
 
-  rebuildParticleSystem();
+  if (!particleSystem) {
+    rebuildParticleSystem();
+  } else if (trailSimulation) {
+    particleSystem.updateFromSimulation(trailSimulation);
+  }
   if (!runtimeSettings.running && !particlesCleared) {
-    particleSystem?.refreshPositions();
+    trailSimulation?.step(1 / 60, foodPoints, foodSettings, 0.5);
+    if (trailSimulation) {
+      particleSystem?.updateFromSimulation(trailSimulation);
+    }
   }
   updateStats();
 }
@@ -689,6 +651,13 @@ function bindStaticControls(): void {
     () => {
       const wasRunning = runtimeSettings.running;
       stopSimulation();
+      trailSimulation = new PhysarumSimulation({
+        agentCount: particleSettings.particleAmount,
+        gridSize: PHYSARUM_GRID_SIZE,
+        groundSize: GROUND_SIZE,
+      });
+      trailSimulation.reset(foodPoints);
+      redrawTrailTexture();
       rebuildParticleSystem();
       runtimeSettings.running = wasRunning;
       setStartButtonState(wasRunning);
@@ -713,7 +682,9 @@ function bindStaticControls(): void {
       particleSettings.particleSpread = value;
       particleSystem?.setParticleSpread(value);
       if (!runtimeSettings.running) {
-        particleSystem?.refreshPositions();
+        if (trailSimulation) {
+          particleSystem?.updateFromSimulation(trailSimulation);
+        }
       }
     },
     commitHistoryIfChanged,
@@ -744,7 +715,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       materialSettings.gradientContrast = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false);
     },
     commitHistoryIfChanged,
   );
@@ -754,7 +725,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       materialSettings.gradientBias = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false);
     },
     commitHistoryIfChanged,
   );
@@ -764,24 +735,23 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       materialSettings.gradientBlur = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false);
     },
     commitHistoryIfChanged,
   );
 
   ui.gradientStart.addEventListener('input', () => {
     materialSettings.gradientStart = ui.gradientStart.value;
-    rebuildSlimeField();
+    rebuildSlimeField(false);
   });
   ui.gradientStart.addEventListener('change', commitHistoryIfChanged);
   ui.gradientEnd.addEventListener('input', () => {
     materialSettings.gradientEnd = ui.gradientEnd.value;
-    rebuildSlimeField();
+    rebuildSlimeField(false);
   });
   ui.gradientEnd.addEventListener('change', commitHistoryIfChanged);
   ui.trailVisible.addEventListener('change', () => {
     materialSettings.trailVisible = ui.trailVisible.checked;
-    pathLine.visible = materialSettings.trailVisible;
     trailPlane.visible = materialSettings.trailVisible;
     commitHistoryIfChanged();
   });
@@ -796,7 +766,11 @@ function bindStaticControls(): void {
   });
   ui.reset.addEventListener('click', () => {
     stopSimulation();
-    particleSystem?.reset();
+    trailSimulation?.reset(foodPoints);
+    if (trailSimulation) {
+      particleSystem?.reset(trailSimulation);
+    }
+    redrawTrailTexture();
     clearParticlesUntilStart();
   });
   ui.resetFood.addEventListener('click', () => {
@@ -916,8 +890,8 @@ function handleResize(camera: PerspectiveCamera): void {
 
 function createTrailTexture(): CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = TRAIL_TEXTURE_SIZE;
-  canvas.height = TRAIL_TEXTURE_SIZE;
+  canvas.width = PHYSARUM_GRID_SIZE;
+  canvas.height = PHYSARUM_GRID_SIZE;
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
   return texture;
@@ -965,20 +939,13 @@ async function initApp(): Promise<void> {
   renderer.domElement.addEventListener('contextmenu', (event) => event.preventDefault());
   window.addEventListener('contextmenu', (event) => event.preventDefault());
 
-  slimePath = generateSlimePath(foodPoints, foodSettings);
-  pathColors = buildGradientColors(slimePath.progress, materialSettings);
-  pathGeometry = createPathGeometry(slimePath, pathColors);
-  const pathMaterial = new LineBasicNodeMaterial({
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.54,
-  });
-  pathLine = new Line(pathGeometry, pathMaterial);
-  pathLine.frustumCulled = false;
-  pathLine.visible = materialSettings.trailVisible;
-  scene.add(pathLine);
-
   trailTexture = createTrailTexture();
+  trailSimulation = new PhysarumSimulation({
+    agentCount: particleSettings.particleAmount,
+    gridSize: PHYSARUM_GRID_SIZE,
+    groundSize: GROUND_SIZE,
+  });
+  trailSimulation.reset(foodPoints);
   const trailMaterial = new MeshBasicMaterial({
     map: trailTexture,
     transparent: true,
@@ -1027,7 +994,11 @@ async function initApp(): Promise<void> {
     controls.update();
 
     if (runtimeSettings.running) {
-      particleSystem?.step(delta, particleSettings.simulationRate);
+      trailSimulation?.step(delta, foodPoints, foodSettings, particleSettings.simulationRate);
+      if (trailSimulation) {
+        particleSystem?.updateFromSimulation(trailSimulation);
+      }
+      redrawTrailTexture();
     }
 
     fpsAccumulator += delta;

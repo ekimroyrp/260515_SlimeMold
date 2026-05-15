@@ -18,13 +18,6 @@ export type ParticleSettings = {
   particleSpread: number;
 };
 
-export type SlimePathData = {
-  positions: Float32Array;
-  progress: Float32Array;
-  pointCount: number;
-  boundsRadius: number;
-};
-
 export type MaterialSettings = {
   gradientStart: string;
   gradientEnd: string;

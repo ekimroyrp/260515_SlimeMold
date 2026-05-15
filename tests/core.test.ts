@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createFoodPoint, createSeedFoodPoints, findFoodPointAt, removeFoodPoint } from '../src/core/food';
 import { HistoryController } from '../src/core/history';
 import { getParticleOpacityForAmount } from '../src/core/particleFlowSystem';
-import { generateSlimePath } from '../src/core/slimePath';
+import { PhysarumSimulation } from '../src/core/physarum';
 import type { SerializableAppState } from '../src/types';
 
 function baseState(): SerializableAppState {
@@ -14,7 +14,7 @@ function baseState(): SerializableAppState {
     },
     particleSettings: {
       simulationRate: 0.3,
-      particleAmount: 500000,
+      particleAmount: 26000,
       particleSize: 0.03,
       particleSpread: 0.1,
     },
@@ -45,19 +45,22 @@ describe('food controls', () => {
   });
 });
 
-describe('slime path generation', () => {
-  it('creates a finite 2d path from food points', () => {
-    const path = generateSlimePath(createSeedFoodPoints(), { radius: 0.42, strength: 1 }, { pointCount: 1200 });
-    expect(path.pointCount).toBe(1200);
-    expect(path.positions.length).toBe(path.pointCount * 3);
-    expect(path.progress.length).toBe(path.pointCount);
-    expect(path.boundsRadius).toBeGreaterThan(0);
+describe('physarum trail simulation', () => {
+  it('keeps agents finite and produces active trail cells', () => {
+    const simulation = new PhysarumSimulation({
+      agentCount: 600,
+      gridSize: 64,
+      groundSize: 6,
+      seed: 12,
+    });
+    const foodPoints = createSeedFoodPoints();
+    simulation.reset(foodPoints);
+    simulation.step(1 / 30, foodPoints, { radius: 0.42, strength: 1 }, 0.3);
+    const stats = simulation.getTrailStats();
 
-    for (let i = 0; i < path.positions.length; i += 3) {
-      expect(Number.isFinite(path.positions[i])).toBe(true);
-      expect(path.positions[i + 1]).toBe(0);
-      expect(Number.isFinite(path.positions[i + 2])).toBe(true);
-    }
+    expect(stats.activeCells).toBeGreaterThan(0);
+    expect(stats.averageTrail).toBeGreaterThan(0);
+    expect(Number.isFinite(stats.averageTrail)).toBe(true);
   });
 });
 
@@ -91,12 +94,12 @@ describe('history controller', () => {
 describe('particle display tuning', () => {
   it('reduces additive opacity as particle counts rise', () => {
     const low = getParticleOpacityForAmount(1000);
-    const defaultAmount = getParticleOpacityForAmount(500000);
-    const high = getParticleOpacityForAmount(5000000);
+    const defaultAmount = getParticleOpacityForAmount(26000);
+    const high = getParticleOpacityForAmount(80000);
 
     expect(low).toBeGreaterThan(defaultAmount);
     expect(defaultAmount).toBeGreaterThan(high);
-    expect(high).toBeGreaterThanOrEqual(0.0015);
-    expect(low).toBeLessThanOrEqual(0.035);
+    expect(high).toBeGreaterThanOrEqual(0.035);
+    expect(low).toBeLessThanOrEqual(0.22);
   });
 });
