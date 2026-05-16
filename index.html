@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath fill='%23b19eff' d='M16 2a14 14 0 1 0 0 28 14 14 0 0 0 0-28Zm0 4a10 10 0 1 1 0 20 10 10 0 0 1 0-20Z'/%3E%3Cpath fill='%23ffae00' d='M23 9c-7 0-12 4-12 10 0 3 2 5 5 5 5 0 8-4 8-9 0-3-1-5-1-6Z'/%3E%3C/svg%3E" />
+    <title>260515_SlimeMold</title>
+    <style>
+      #ui-panel {
+        visibility: hidden;
+        opacity: 0;
+      }
+
+      html.ui-ready #ui-panel {
+        visibility: visible;
+        opacity: 1;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-9DSROZUa.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/three-core-ByJR9Akr.js">
+    <link rel="modulepreload" crossorigin href="./assets/three-extras-CQWJywhU.js">
+    <link rel="stylesheet" crossorigin href="./assets/index-jI1RLVYx.css">
+  </head>
+  <body>
+    <div id="webgpu-warning" class="webgpu-warning" hidden>
+      WebGPU is required for this project.
+    </div>
+
+    <div id="ui-panel" class="apple-panel">
+      <div id="ui-handle" class="panel-drag-handle">
+        <button
+          type="button"
+          id="collapse-toggle"
+          class="collapse-button panel-collapse-toggle"
+          aria-label="Collapse controls"
+          aria-expanded="true"
+        >
+          <span class="collapse-icon" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="ui-body panel-sections">
+        <div class="control-hint">Wheel = Zoom, MMB = Pan, RMB = Orbit</div>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Simulation</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <div id="runtime-stats" class="runtime-stats">WebGPU | FPS 0 | Particles 26000</div>
+
+            <div class="control control-grid-2">
+              <button type="button" id="start-sim" class="pill-button control-button-wide">Start</button>
+              <button type="button" id="reset-sim" class="pill-button control-button-wide">Reset</button>
+            </div>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Simulation Speed</span>
+                <span id="simulation-rate-value">0.30</span>
+              </div>
+              <input type="range" id="simulation-rate" min="0.05" max="8" step="0.01" value="0.3" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Simulation Boundary</span>
+                <span id="particle-boundary-value">10.0</span>
+              </div>
+              <input type="range" id="particle-boundary" min="2" max="20" step="0.1" value="10" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Particles</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <label class="control">
+              <div class="control-row">
+                <span>Particle Amount</span>
+                <span id="particle-amount-value">26000</span>
+              </div>
+              <input type="range" id="particle-amount" min="1000" max="80000" step="1000" value="26000" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Particle Size</span>
+                <span id="particle-size-value">0.030</span>
+              </div>
+              <input type="range" id="particle-size" min="0.005" max="0.16" step="0.001" value="0.03" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Turn Rate</span>
+                <span id="turn-rate-value">1.55</span>
+              </div>
+              <input type="range" id="turn-rate" min="0" max="4" step="0.01" value="1.55" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Sensor Distance</span>
+                <span id="sensor-distance-value">4.2</span>
+              </div>
+              <input type="range" id="sensor-distance" min="1" max="12" step="0.1" value="4.2" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Deposit</span>
+                <span id="trail-deposit-value">0.34</span>
+              </div>
+              <input type="range" id="trail-deposit" min="0.01" max="1" step="0.01" value="0.34" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Decay</span>
+                <span id="trail-decay-value">0.978</span>
+              </div>
+              <input type="range" id="trail-decay" min="0.9" max="0.999" step="0.001" value="0.978" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Diffusion</span>
+                <span id="trail-diffusion-value">0.22</span>
+              </div>
+              <input type="range" id="trail-diffusion" min="0" max="1" step="0.01" value="0.22" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Random Drift</span>
+                <span id="random-drift-value">1.80</span>
+              </div>
+              <input type="range" id="random-drift" min="0" max="4" step="0.01" value="1.8" />
+            </label>
+
+            <div class="control display-toggle-row">
+              <label class="toggle-control toggle-control-stacked display-toggle-control">
+                <span>Particle Display</span>
+                <input type="checkbox" id="particle-visible" checked />
+              </label>
+              <label class="toggle-control toggle-control-stacked display-toggle-control">
+                <span>Map Display</span>
+                <input type="checkbox" id="trail-visible" checked />
+              </label>
+            </div>
+
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Source</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <div class="section-tip">Shift+LMB = Add Source<br />Ctrl+LMB = Delete Source<br />LMB+Drag = Move Source</div>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Source Radius</span>
+                <span id="source-radius-value">0.42</span>
+              </div>
+              <input type="range" id="source-radius" min="0.12" max="2" step="0.01" value="0.42" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Source Strength</span>
+                <span id="source-strength-value">1.00</span>
+              </div>
+              <input type="range" id="source-strength" min="0" max="3" step="0.01" value="1" />
+            </label>
+
+            <div id="source-stats" class="runtime-stats">Sources 1</div>
+
+            <div class="control">
+              <button type="button" id="reset-source" class="pill-button control-button-wide">Reset Sources</button>
+            </div>
+
+            <label class="control toggle-control">
+              <span>Hide Source</span>
+              <input type="checkbox" id="hide-source" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Food</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <div class="section-tip">LMB = Add Food<br />Ctrl+LMB = Delete Food<br />LMB+Drag = Move Food</div>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Food Radius</span>
+                <span id="food-radius-value">0.42</span>
+              </div>
+              <input type="range" id="food-radius" min="0.12" max="2" step="0.01" value="0.42" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Food Strength</span>
+                <span id="food-strength-value">1.00</span>
+              </div>
+              <input type="range" id="food-strength" min="0" max="3" step="0.01" value="1" />
+            </label>
+
+            <div id="food-stats" class="runtime-stats">Food 4</div>
+
+            <div class="control">
+              <button type="button" id="reset-food" class="pill-button control-button-wide">Reset Food</button>
+            </div>
+
+            <label class="control toggle-control">
+              <span>Hide Food</span>
+              <input type="checkbox" id="hide-food" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Material</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <div class="control control-grid-2">
+              <label class="control compact">
+                <div class="control-row">
+                  <span>Gradient Start</span>
+                </div>
+                <input type="color" id="gradient-start-color" class="color-picker" value="#ff00ae" />
+              </label>
+              <label class="control compact">
+                <div class="control-row">
+                  <span>Gradient End</span>
+                </div>
+                <input type="color" id="gradient-end-color" class="color-picker" value="#00ff88" />
+              </label>
+            </div>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Gradient Contrast</span>
+                <span id="gradient-contrast-value">1.40</span>
+              </div>
+              <input type="range" id="gradient-contrast" min="0.2" max="3" step="0.01" value="1.4" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Gradient Bias</span>
+                <span id="gradient-bias-value">-0.50</span>
+              </div>
+              <input type="range" id="gradient-bias" min="-1" max="1" step="0.01" value="-0.5" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Gradient Blur</span>
+                <span id="gradient-blur-value">0.35</span>
+              </div>
+              <input type="range" id="gradient-blur" min="0" max="1" step="0.01" value="0.35" />
+            </label>
+
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Export</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
+            <div class="control">
+              <button type="button" id="export-screenshot" class="pill-button control-button-wide">Export Screenshot</button>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div id="ui-handle-bottom"></div>
+    </div>
+
+    <canvas id="app-canvas"></canvas>
+  </body>
+</html>
