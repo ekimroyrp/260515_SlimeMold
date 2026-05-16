@@ -936,7 +936,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       sourceSettings.radius = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false, false);
     },
     commitHistoryIfChanged,
   );
@@ -946,7 +946,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       sourceSettings.strength = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false, false);
     },
     commitHistoryIfChanged,
   );
@@ -956,7 +956,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       foodSettings.radius = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false, false);
     },
     commitHistoryIfChanged,
   );
@@ -966,7 +966,7 @@ function bindStaticControls(): void {
     formatFixed(2),
     (value) => {
       foodSettings.strength = value;
-      rebuildSlimeField();
+      rebuildSlimeField(false, false);
     },
     commitHistoryIfChanged,
   );
