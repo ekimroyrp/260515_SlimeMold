@@ -40,6 +40,10 @@ function wrapIndex(value: number, size: number): number {
   return next;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
 export class PhysarumSimulation {
   readonly agentCount: number;
   readonly gridSize: number;
@@ -68,6 +72,15 @@ export class PhysarumSimulation {
 
   getTrailStats(): PhysarumStats {
     return { ...this.stats };
+  }
+
+  resize(options: PhysarumOptions): PhysarumSimulation {
+    const next = new PhysarumSimulation(options);
+    this.copyAgentsTo(next);
+    this.copyTrailTo(next);
+    next.emissionCursor = this.emissionCursor % next.agentCount;
+    next.updateStatsFromTrail();
+    return next;
   }
 
   writeAgentPositions(target: Float32Array, y = 0.035): void {
@@ -168,6 +181,50 @@ export class PhysarumSimulation {
     this.agentX[index] = Math.min(half, Math.max(-half, centerX + Math.cos(angle) * radius));
     this.agentZ[index] = Math.min(half, Math.max(-half, centerZ + Math.sin(angle) * radius));
     this.agentAngle[index] = angle;
+  }
+
+  private copyAgentsTo(target: PhysarumSimulation): void {
+    const half = target.groundSize * 0.5;
+    const jitterScale = Math.max(0.002, target.groundSize / target.gridSize);
+    for (let i = 0; i < target.agentCount; i += 1) {
+      const sourceIndex = i % this.agentCount;
+      const isNewAgent = i >= this.agentCount;
+      const angle = this.agentAngle[sourceIndex] + (isNewAgent ? (target.random() - 0.5) * 0.42 : 0);
+      const jitter = isNewAgent ? jitterScale * (0.5 + target.random()) : 0;
+      target.agentX[i] = clamp(this.agentX[sourceIndex] + Math.cos(angle) * jitter, -half, half);
+      target.agentZ[i] = clamp(this.agentZ[sourceIndex] + Math.sin(angle) * jitter, -half, half);
+      target.agentAngle[i] = angle;
+    }
+  }
+
+  private copyTrailTo(target: PhysarumSimulation): void {
+    const half = target.groundSize * 0.5;
+    for (let y = 0; y < target.gridSize; y += 1) {
+      const worldZ = ((y + 0.5) / target.gridSize) * target.groundSize - half;
+      for (let x = 0; x < target.gridSize; x += 1) {
+        const worldX = ((x + 0.5) / target.gridSize) * target.groundSize - half;
+        target.trail[y * target.gridSize + x] = this.sampleTrailAtWorld(worldX, worldZ);
+      }
+    }
+  }
+
+  private sampleTrailAtWorld(x: number, z: number): number {
+    const half = this.groundSize * 0.5;
+    const gridX = ((x + half) / this.groundSize) * this.gridSize - 0.5;
+    const gridY = ((z + half) / this.groundSize) * this.gridSize - 0.5;
+    if (gridX < 0 || gridY < 0 || gridX > this.gridSize - 1 || gridY > this.gridSize - 1) {
+      return 0;
+    }
+
+    const x0 = Math.floor(gridX);
+    const y0 = Math.floor(gridY);
+    const x1 = Math.min(this.gridSize - 1, x0 + 1);
+    const y1 = Math.min(this.gridSize - 1, y0 + 1);
+    const tx = gridX - x0;
+    const ty = gridY - y0;
+    const top = this.trail[y0 * this.gridSize + x0] * (1 - tx) + this.trail[y0 * this.gridSize + x1] * tx;
+    const bottom = this.trail[y1 * this.gridSize + x0] * (1 - tx) + this.trail[y1 * this.gridSize + x1] * tx;
+    return top * (1 - ty) + bottom * ty;
   }
 
   private emitFromSources(deltaSeconds: number, sourcePoints: SourcePoint[], sourceSettings: SourceSettings): void {
@@ -298,6 +355,22 @@ export class PhysarumSimulation {
       }
     }
     this.trail.set(this.nextTrail);
+    this.stats = {
+      activeCells,
+      averageTrail: sum / this.trail.length,
+    };
+  }
+
+  private updateStatsFromTrail(): void {
+    let activeCells = 0;
+    let sum = 0;
+    for (let i = 0; i < this.trail.length; i += 1) {
+      const value = this.trail[i];
+      if (value > 0.05) {
+        activeCells += 1;
+      }
+      sum += value;
+    }
     this.stats = {
       activeCells,
       averageTrail: sum / this.trail.length,

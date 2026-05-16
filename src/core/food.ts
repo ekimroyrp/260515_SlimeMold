@@ -72,3 +72,15 @@ export function removeFoodPoint(points: FoodPoint[], pointId: string): FoodPoint
 export function removeSourcePoint(points: SourcePoint[], pointId: string): SourcePoint[] {
   return points.filter((point) => point.id !== pointId);
 }
+
+function movePoint<T extends FoodPoint | SourcePoint>(points: T[], pointId: string, x: number, z: number): T[] {
+  return points.map((point) => (point.id === pointId ? { ...point, x, z } : point));
+}
+
+export function moveFoodPoint(points: FoodPoint[], pointId: string, x: number, z: number): FoodPoint[] {
+  return movePoint(points, pointId, x, z);
+}
+
+export function moveSourcePoint(points: SourcePoint[], pointId: string, x: number, z: number): SourcePoint[] {
+  return movePoint(points, pointId, x, z);
+}

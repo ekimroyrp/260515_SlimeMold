@@ -6,6 +6,8 @@ import {
   createSourcePoint,
   findFoodPointAt,
   findSourcePointAt,
+  moveFoodPoint,
+  moveSourcePoint,
   removeFoodPoint,
   removeSourcePoint,
 } from '../src/core/food';
@@ -13,6 +15,7 @@ import { getSourceFoodBlend } from '../src/core/colorField';
 import { HistoryController } from '../src/core/history';
 import { getParticleOpacityForAmount } from '../src/core/particleFlowSystem';
 import { PhysarumSimulation } from '../src/core/physarum';
+import { DEFAULT_TRAIL_GRID_SIZE, getTrailGridSize } from '../src/core/trailResolution';
 import type { SerializableAppState } from '../src/types';
 
 function baseState(): SerializableAppState {
@@ -31,13 +34,13 @@ function baseState(): SerializableAppState {
       simulationRate: 0.3,
       particleAmount: 26000,
       particleSize: 0.03,
-      boundary: 6,
+      boundary: 10,
     },
     material: {
-      gradientStart: '#000000',
+      gradientStart: '#ff00ae',
       gradientEnd: '#00ff88',
       gradientContrast: 1.4,
-      gradientBias: -0.4,
+      gradientBias: -0.5,
       gradientBlur: 0.35,
       particleVisible: true,
       trailVisible: true,
@@ -70,6 +73,19 @@ describe('food controls', () => {
     expect(findSourcePointAt(points, 0.4, 0.4, 0.1)).toBeNull();
     expect(removeSourcePoint(points, 'a')).toEqual([points[1]]);
   });
+
+  it('moves food and source points by id', () => {
+    const foodPoints = [createFoodPoint(0, 0, 'food-a'), createFoodPoint(1, 0, 'food-b')];
+    const sourcePoints = [createSourcePoint(0, 0, 'source-a')];
+
+    expect(moveFoodPoint(foodPoints, 'food-a', 0.25, -0.5)).toEqual([
+      { id: 'food-a', x: 0.25, z: -0.5 },
+      foodPoints[1],
+    ]);
+    expect(moveSourcePoint(sourcePoints, 'source-a', -0.75, 0.5)).toEqual([
+      { id: 'source-a', x: -0.75, z: 0.5 },
+    ]);
+  });
 });
 
 describe('source food color field', () => {
@@ -84,6 +100,15 @@ describe('source food color field', () => {
 });
 
 describe('physarum trail simulation', () => {
+  it('scales trail grid resolution with boundary size', () => {
+    expect(getTrailGridSize(6)).toBe(DEFAULT_TRAIL_GRID_SIZE);
+    expect(getTrailGridSize(8)).toBe(256);
+    expect(getTrailGridSize(10)).toBe(320);
+    expect(getTrailGridSize(14)).toBe(448);
+    expect(getTrailGridSize(20)).toBe(640);
+    expect(getTrailGridSize(2)).toBe(64);
+  });
+
   it('keeps agents finite and produces active trail cells', () => {
     const simulation = new PhysarumSimulation({
       agentCount: 600,
@@ -101,6 +126,35 @@ describe('physarum trail simulation', () => {
     expect(stats.activeCells).toBeGreaterThan(0);
     expect(stats.averageTrail).toBeGreaterThan(0);
     expect(Number.isFinite(stats.averageTrail)).toBe(true);
+  });
+
+  it('resizes without clearing the active trail or agent positions', () => {
+    const simulation = new PhysarumSimulation({
+      agentCount: 600,
+      gridSize: 64,
+      groundSize: 6,
+      seed: 12,
+    });
+    const sourcePoints = createSeedSourcePoints();
+    const foodPoints = createSeedFoodPoints();
+    const sourceSettings = { radius: 0.42, strength: 1 };
+    simulation.reset(sourcePoints, sourceSettings);
+    simulation.step(1 / 30, sourcePoints, sourceSettings, foodPoints, { radius: 0.42, strength: 1 }, 0.3);
+
+    const resized = simulation.resize({
+      agentCount: 900,
+      gridSize: 128,
+      groundSize: 10,
+      seed: 13,
+    });
+    const positions = new Float32Array(resized.agentCount * 3);
+    resized.writeAgentPositions(positions);
+
+    expect(resized.agentCount).toBe(900);
+    expect(resized.gridSize).toBe(128);
+    expect(resized.groundSize).toBe(10);
+    expect(resized.getTrailStats().activeCells).toBeGreaterThan(0);
+    expect(Array.from(positions).every(Number.isFinite)).toBe(true);
   });
 });
 

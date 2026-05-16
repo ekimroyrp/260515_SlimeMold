@@ -3,9 +3,11 @@ import {
   ACESFilmicToneMapping,
   CanvasTexture,
   CircleGeometry,
+  ClampToEdgeWrapping,
   Color,
   DoubleSide,
   Group,
+  LinearFilter,
   MOUSE,
   Mesh,
   MeshBasicMaterial,
@@ -29,13 +31,15 @@ import {
   createSourcePoint,
   findFoodPointAt,
   findSourcePointAt,
+  moveFoodPoint,
+  moveSourcePoint,
   removeFoodPoint,
   removeSourcePoint,
 } from './core/food';
-import { parseHexColor } from './core/colorField';
 import { HistoryController } from './core/history';
 import { ParticleFlowSystem } from './core/particleFlowSystem';
 import { PhysarumSimulation } from './core/physarum';
+import { clampBoundarySize, getTrailGridSize } from './core/trailResolution';
 import type {
   FoodPoint,
   FoodSettings,
@@ -91,10 +95,25 @@ type UiRefs = {
   exportScreenshot: HTMLButtonElement;
 };
 
+type EditablePointKind = 'source' | 'food';
+
+type EditablePointHit = {
+  kind: EditablePointKind;
+  point: SourcePoint | FoodPoint;
+};
+
+type EditablePointDragState = {
+  pointerId: number;
+  kind: EditablePointKind;
+  pointId: string;
+  startClientX: number;
+  startClientY: number;
+  moved: boolean;
+};
+
 const EXPORT_BASE_NAME = '260515_SlimeMold';
-const DEFAULT_BOUNDARY_SIZE = 6;
 const FOOD_HIT_MIN_RADIUS = 0.13;
-const PHYSARUM_GRID_SIZE = 192;
+const EDIT_POINT_DRAG_THRESHOLD_PX = 3;
 
 function revealUiWhenStyled(maxWaitMs = 1500): void {
   const start = performance.now();
@@ -379,6 +398,9 @@ let trailTexture: CanvasTexture;
 let trailSimulation: PhysarumSimulation | null = null;
 let draggingPanel = false;
 let particlesCleared = false;
+let simulationHasStarted = false;
+let editablePointDrag: EditablePointDragState | null = null;
+let suppressNextCanvasClick = false;
 const dragOffset = { x: 0, y: 0 };
 const raycaster = new Raycaster();
 const pointerNdc = new Vector2();
@@ -386,14 +408,15 @@ const groundPoint = new Vector3();
 let screenshotExportCount = 0;
 
 function getBoundarySize(): number {
-  return Math.max(2, particleSettings.boundary || DEFAULT_BOUNDARY_SIZE);
+  return clampBoundarySize(particleSettings.boundary);
 }
 
 function createPhysarumSimulation(): PhysarumSimulation {
+  const boundary = getBoundarySize();
   return new PhysarumSimulation({
     agentCount: particleSettings.particleAmount,
-    gridSize: PHYSARUM_GRID_SIZE,
-    groundSize: getBoundarySize(),
+    gridSize: getTrailGridSize(boundary),
+    groundSize: boundary,
   });
 }
 
@@ -450,9 +473,7 @@ function showParticlesForStart(): void {
 }
 
 function updateStats(fps = 0): void {
-  const trailStats = trailSimulation?.getTrailStats();
-  const activeCells = trailStats ? ` | Map ${formatStatsNumber(trailStats.activeCells)}` : '';
-  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)}${activeCells}`;
+  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)}`;
   ui.sourceStats.textContent = `Sources ${sourcePoints.length}`;
   ui.foodStats.textContent = `Food ${foodPoints.length}`;
 }
@@ -483,49 +504,10 @@ function exportScreenshot(): void {
   }, 'image/png');
 }
 
-function worldToTrailTexture(x: number, z: number): [number, number] {
-  const boundary = getBoundarySize();
-  const half = boundary * 0.5;
-  return [
-    ((x + half) / boundary) * PHYSARUM_GRID_SIZE,
-    ((z + half) / boundary) * PHYSARUM_GRID_SIZE,
-  ];
-}
-
-function rgbaFromHex(hex: string, alpha: number): string {
-  const [r, g, b] = parseHexColor(hex).map((channel) => Math.round(channel));
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-}
-
-function drawPointGlows(context: CanvasRenderingContext2D, points: Array<FoodPoint | SourcePoint>, radiusSetting: number, color: string): void {
-  for (const point of points) {
-    const [x, y] = worldToTrailTexture(point.x, point.z);
-    const radius = Math.max(9, radiusSetting * 28);
-    const glow = context.createRadialGradient(x, y, 0, x, y, radius);
-    glow.addColorStop(0, rgbaFromHex(color, 0.78));
-    glow.addColorStop(0.34, rgbaFromHex(color, 0.28));
-    glow.addColorStop(1, rgbaFromHex(color, 0));
-    context.fillStyle = glow;
-    context.beginPath();
-    context.arc(x, y, radius, 0, Math.PI * 2);
-    context.fill();
-  }
-}
-
 function redrawTrailTexture(): void {
+  syncTrailTextureSize();
   const canvas = trailTexture.image as HTMLCanvasElement;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    return;
-  }
-
   trailSimulation?.paintToCanvas(canvas, materialSettings, sourcePoints, foodPoints);
-  if (!materialSettings.hideSource) {
-    drawPointGlows(context, sourcePoints, sourceSettings.radius, materialSettings.gradientStart);
-  }
-  if (!materialSettings.hideFood) {
-    drawPointGlows(context, foodPoints, foodSettings.radius, materialSettings.gradientEnd);
-  }
   trailTexture.needsUpdate = true;
 }
 
@@ -548,13 +530,17 @@ function rebuildFoodMeshes(): void {
     const outlineGeometry = new RingGeometry(radius * 1.04, radius * 1.22, 32);
     const material = new MeshBasicMaterial({
       color: new Color(color),
-      transparent: true,
-      opacity: 0.95,
+      depthTest: false,
       depthWrite: false,
+      opacity: 1,
+      side: DoubleSide,
+      toneMapped: false,
+      transparent: true,
     });
     const mesh = new Mesh(geometry, material);
-    mesh.position.set(point.x, 0.018, point.z);
+    mesh.position.set(point.x, 0.08, point.z);
     mesh.rotation.x = -Math.PI * 0.5;
+    mesh.renderOrder = 1000;
     mesh.userData.pointId = point.id;
     mesh.userData.pointKind = kind;
     foodGroup.add(mesh);
@@ -563,14 +549,17 @@ function rebuildFoodMeshes(): void {
       outlineGeometry,
       new MeshBasicMaterial({
         color: new Color(0xffffff),
-        transparent: true,
-        opacity: 0.95,
+        depthTest: false,
         depthWrite: false,
+        opacity: 1,
         side: DoubleSide,
+        toneMapped: false,
+        transparent: true,
       }),
     );
-    outline.position.set(point.x, 0.021, point.z);
+    outline.position.set(point.x, 0.081, point.z);
     outline.rotation.x = -Math.PI * 0.5;
+    outline.renderOrder = 1001;
     outline.userData.pointId = point.id;
     outline.userData.pointKind = kind;
     foodGroup.add(outline);
@@ -607,22 +596,50 @@ function updateTrailPlaneGeometry(): void {
   trailPlane.geometry = new PlaneGeometry(getBoundarySize(), getBoundarySize());
 }
 
-function rebuildSimulationBoundary(): void {
-  const wasRunning = runtimeSettings.running;
-  stopSimulation();
+function syncTrailTextureSize(): void {
+  if (!trailSimulation || !trailTexture) {
+    return;
+  }
+  const canvas = trailTexture.image as HTMLCanvasElement;
+  if (canvas.width === trailSimulation.gridSize && canvas.height === trailSimulation.gridSize) {
+    return;
+  }
+
+  const previousTexture = trailTexture;
+  trailTexture = createTrailTexture(trailSimulation.gridSize);
+  if (trailPlane) {
+    trailPlane.material.map = trailTexture;
+    trailPlane.material.needsUpdate = true;
+  }
+  previousTexture.dispose();
+}
+
+function resizeSimulationPreservingState(): void {
+  const boundary = getBoundarySize();
+  const wasCleared = particlesCleared;
   clampPointsToBoundary();
-  trailSimulation = createPhysarumSimulation();
-  trailSimulation.reset(sourcePoints, sourceSettings);
+  if (trailSimulation) {
+    trailSimulation = trailSimulation.resize({
+      agentCount: particleSettings.particleAmount,
+      gridSize: getTrailGridSize(boundary),
+      groundSize: boundary,
+    });
+  } else {
+    trailSimulation = createPhysarumSimulation();
+    trailSimulation.reset(sourcePoints, sourceSettings);
+  }
   updateTrailPlaneGeometry();
   redrawTrailTexture();
   rebuildFoodMeshes();
   rebuildParticleSystem();
-  runtimeSettings.running = wasRunning;
-  setStartButtonState(wasRunning);
+  particlesCleared = wasCleared;
+  if (particlesCleared) {
+    clearParticlesUntilStart();
+  }
   updateStats();
 }
 
-function rebuildSlimeField(resetTrail = true): void {
+function rebuildSlimeField(resetTrail = true, stepWhenPaused = true): void {
   if (resetTrail) {
     trailSimulation?.reset(sourcePoints, sourceSettings);
   }
@@ -641,7 +658,7 @@ function rebuildSlimeField(resetTrail = true): void {
   } else if (trailSimulation) {
     particleSystem.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
   }
-  if (!runtimeSettings.running && !particlesCleared) {
+  if (stepWhenPaused && !runtimeSettings.running && !particlesCleared) {
     trailSimulation?.step(1 / 60, sourcePoints, sourceSettings, foodPoints, foodSettings, 0.5);
     if (trailSimulation) {
       particleSystem?.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
@@ -696,7 +713,7 @@ function applySerializableState(state: SerializableAppState): void {
   materialSettings.hideSource = state.material.hideSource;
   materialSettings.hideFood = state.material.hideFood;
   syncStaticControlsFromState();
-  rebuildSimulationBoundary();
+  resizeSimulationPreservingState();
 }
 
 function bindSectionCollapseToggles(): void {
@@ -794,7 +811,7 @@ function bindStaticControls(): void {
     formatFixed(1),
     (value) => {
       particleSettings.boundary = value;
-      rebuildSimulationBoundary();
+      resizeSimulationPreservingState();
     },
     commitHistoryIfChanged,
   );
@@ -807,14 +824,7 @@ function bindStaticControls(): void {
       updateStats();
     },
     () => {
-      const wasRunning = runtimeSettings.running;
-      stopSimulation();
-      trailSimulation = createPhysarumSimulation();
-      trailSimulation.reset(sourcePoints, sourceSettings);
-      redrawTrailTexture();
-      rebuildParticleSystem();
-      runtimeSettings.running = wasRunning;
-      setStartButtonState(wasRunning);
+      resizeSimulationPreservingState();
       commitHistoryIfChanged();
     },
   );
@@ -935,6 +945,7 @@ function bindStaticControls(): void {
   ui.start.addEventListener('click', () => {
     const shouldRun = !runtimeSettings.running;
     if (shouldRun) {
+      simulationHasStarted = true;
       showParticlesForStart();
     }
     runtimeSettings.running = shouldRun;
@@ -948,6 +959,7 @@ function bindStaticControls(): void {
     }
     redrawTrailTexture();
     clearParticlesUntilStart();
+    simulationHasStarted = false;
   });
   ui.resetSource.addEventListener('click', () => {
     sourcePoints = createSeedSourcePoints();
@@ -1010,7 +1022,7 @@ function addFoodAt(point: Vector3): void {
   const x = Math.min(half, Math.max(-half, point.x));
   const z = Math.min(half, Math.max(-half, point.z));
   foodPoints = [...foodPoints, createFoodPoint(x, z)];
-  rebuildSlimeField();
+  rebuildSlimeField(false, false);
   commitHistoryIfChanged();
 }
 
@@ -1019,7 +1031,7 @@ function addSourceAt(point: Vector3): void {
   const x = Math.min(half, Math.max(-half, point.x));
   const z = Math.min(half, Math.max(-half, point.z));
   sourcePoints = [...sourcePoints, createSourcePoint(x, z)];
-  rebuildSlimeField();
+  rebuildSlimeField(false, false);
   commitHistoryIfChanged();
 }
 
@@ -1029,25 +1041,139 @@ function squaredDistance(point: FoodPoint | SourcePoint, x: number, z: number): 
   return dx * dx + dz * dz;
 }
 
-function deleteEditablePointAt(point: Vector3): void {
+function getEditablePointHit(point: Vector3, includeHidden = true): EditablePointHit | null {
   const sourceHitRadius = Math.max(FOOD_HIT_MIN_RADIUS, sourceSettings.radius * 0.42);
   const foodHitRadius = Math.max(FOOD_HIT_MIN_RADIUS, foodSettings.radius * 0.42);
-  const sourceHit = findSourcePointAt(sourcePoints, point.x, point.z, sourceHitRadius);
-  const foodHit = findFoodPointAt(foodPoints, point.x, point.z, foodHitRadius);
+  const sourceHit = includeHidden || !materialSettings.hideSource
+    ? findSourcePointAt(sourcePoints, point.x, point.z, sourceHitRadius)
+    : null;
+  const foodHit = includeHidden || !materialSettings.hideFood
+    ? findFoodPointAt(foodPoints, point.x, point.z, foodHitRadius)
+    : null;
   if (!sourceHit && !foodHit) {
-    return;
+    return null;
   }
   if (sourceHit && (!foodHit || squaredDistance(sourceHit, point.x, point.z) <= squaredDistance(foodHit, point.x, point.z))) {
-    sourcePoints = removeSourcePoint(sourcePoints, sourceHit.id);
-  } else if (foodHit) {
-    foodPoints = removeFoodPoint(foodPoints, foodHit.id);
+    return { kind: 'source', point: sourceHit };
   }
-  rebuildSlimeField();
+  if (foodHit) {
+    return { kind: 'food', point: foodHit };
+  }
+  return null;
+}
+
+function moveEditablePointTo(kind: EditablePointKind, pointId: string, point: Vector3): boolean {
+  const half = getBoundarySize() * 0.5;
+  const x = Math.min(half, Math.max(-half, point.x));
+  const z = Math.min(half, Math.max(-half, point.z));
+  const current = kind === 'source'
+    ? sourcePoints.find((source) => source.id === pointId)
+    : foodPoints.find((food) => food.id === pointId);
+  if (!current || (Math.abs(current.x - x) < 0.0001 && Math.abs(current.z - z) < 0.0001)) {
+    return false;
+  }
+
+  if (kind === 'source') {
+    sourcePoints = moveSourcePoint(sourcePoints, pointId, x, z);
+  } else {
+    foodPoints = moveFoodPoint(foodPoints, pointId, x, z);
+  }
+  return true;
+}
+
+function deleteEditablePointAt(point: Vector3): void {
+  const hit = getEditablePointHit(point);
+  if (!hit) {
+    return;
+  }
+  if (hit.kind === 'source') {
+    sourcePoints = removeSourcePoint(sourcePoints, hit.point.id);
+  } else {
+    foodPoints = removeFoodPoint(foodPoints, hit.point.id);
+  }
+  rebuildSlimeField(false, false);
   commitHistoryIfChanged();
 }
 
 function bindFoodCanvasEditing(): void {
+  const finishDrag = (event: PointerEvent, commit: boolean): void => {
+    const drag = editablePointDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    if (appCanvas.hasPointerCapture(event.pointerId)) {
+      appCanvas.releasePointerCapture(event.pointerId);
+    }
+    appCanvas.classList.remove('is-point-dragging');
+    controls.enabled = true;
+    editablePointDrag = null;
+    if (commit && drag.moved) {
+      commitHistoryIfChanged();
+    }
+  };
+
+  appCanvas.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || event.ctrlKey) {
+      return;
+    }
+    const point = getCanvasGroundPoint(event)?.clone();
+    if (!point) {
+      return;
+    }
+    const hit = getEditablePointHit(point, false);
+    if (!hit) {
+      return;
+    }
+
+    event.preventDefault();
+    suppressNextCanvasClick = true;
+    editablePointDrag = {
+      pointerId: event.pointerId,
+      kind: hit.kind,
+      pointId: hit.point.id,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      moved: false,
+    };
+    appCanvas.setPointerCapture(event.pointerId);
+    appCanvas.classList.add('is-point-dragging');
+    controls.enabled = false;
+  });
+
+  appCanvas.addEventListener('pointermove', (event) => {
+    const drag = editablePointDrag;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const distancePx = Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY);
+    if (!drag.moved && distancePx < EDIT_POINT_DRAG_THRESHOLD_PX) {
+      return;
+    }
+    drag.moved = true;
+    const point = getCanvasGroundPoint(event)?.clone();
+    if (!point) {
+      return;
+    }
+    if (moveEditablePointTo(drag.kind, drag.pointId, point)) {
+      rebuildSlimeField(drag.kind === 'source' && !simulationHasStarted, false);
+    }
+  });
+
+  appCanvas.addEventListener('pointerup', (event) => {
+    finishDrag(event, true);
+  });
+  appCanvas.addEventListener('pointercancel', (event) => {
+    finishDrag(event, false);
+  });
+
   appCanvas.addEventListener('click', (event) => {
+    if (suppressNextCanvasClick) {
+      suppressNextCanvasClick = false;
+      event.preventDefault();
+      return;
+    }
     if (event.button !== 0 || event.detail !== 1) {
       return;
     }
@@ -1076,12 +1202,17 @@ function handleResize(camera: PerspectiveCamera): void {
   clampPanelToViewport();
 }
 
-function createTrailTexture(): CanvasTexture {
+function createTrailTexture(gridSize = getTrailGridSize(getBoundarySize())): CanvasTexture {
   const canvas = document.createElement('canvas');
-  canvas.width = PHYSARUM_GRID_SIZE;
-  canvas.height = PHYSARUM_GRID_SIZE;
+  canvas.width = gridSize;
+  canvas.height = gridSize;
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = LinearFilter;
+  texture.magFilter = LinearFilter;
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
   return texture;
 }
 
@@ -1095,7 +1226,7 @@ async function initApp(): Promise<void> {
   scene.background = new Color(0x030407);
 
   camera = new PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.01, 100);
-  camera.position.set(0, 4.8, 4.9);
+  camera.position.set(0, 10.8, 0.01);
   camera.lookAt(0, 0, 0);
 
   renderer = new WebGPURenderer({ antialias: true, canvas: appCanvas });

@@ -44,6 +44,10 @@ body {
   height: 100%;
 }
 
+#app-canvas.is-point-dragging {
+  cursor: grabbing;
+}
+
 .webgpu-warning {
   position: fixed;
   left: 50%;
@@ -249,6 +253,17 @@ body {
 }
 
 .runtime-stats {
+  line-height: 1.35;
+}
+
+.section-tip {
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 560;
   line-height: 1.35;
 }
 
