@@ -1,52 +1,38 @@
 # 260515_SlimeMold
 
-260515_SlimeMold is a WebGPU slime mold simulation built with Three.js, TypeScript, and Vite. It uses additive particles driven by a live Physarum-style sensor/turn/deposit trail field on a 2D ground plane, seeded source and food points, editable food/source placement, and the same compact control-panel style as the StrangeAttractor reference project.
+260515_SlimeMold is a Vite + TypeScript + Three.js WebGPU slime mold playground that runs a 2D Physarum-style particle simulation on a ground plane. The app uses additive particle dots, a live trail map, editable source and food points, gradient-based source-to-food coloring, undo/redo history, screenshot export, and a compact draggable control panel based on the StrangeAttractor reference project.
 
 ## Features
-
-- WebGPU-only Three.js particle display.
-- Live 2D ground-plane trail field with agent sensing, turning, depositing, diffusion, and decay.
-- Particles are the live slime agents that create the gradient trail pattern on the floor.
-- Left-click food placement, `Shift+LMB` source placement, and `Ctrl+LMB` point deletion.
-- Add, delete, and drag source/food points without restarting the active simulation.
+- WebGPU-only Three.js renderer with transparent additive particle dots and a floor map generated from the same live trail field.
+- Physarum-style behavior loop with sensor sampling, turn steering, random drift, trail deposit, diffusion, decay, source emission, and food attraction.
+- Separate Simulation and Particles sections: simulation speed/boundary controls are split from particle amount, size, display, and behavior controls.
+- Behavior sliders for Turn Rate, Sensor Distance, Trail Deposit, Trail Decay, Trail Diffusion, and Random Drift, with defaults matching the original hardcoded simulation.
+- Editable source and food points on the ground plane: add, delete, and drag points without restarting the active simulation.
 - Source dots use the gradient start color, food dots use the gradient end color, and particles/map cells blend by nearest source-vs-food distance.
-- Simulation speed/boundary, particle amount/size, and particle behavior controls.
-- Turn rate, sensor distance, trail deposit, trail decay, trail diffusion, and random drift controls.
-- Source radius/strength and food radius/strength controls.
-- Material gradient controls, particle/map display toggles, source/food hide toggles, and PNG screenshot export.
-- Undo and redo for simulation controls and food edits with `Ctrl+Z` and `Ctrl+Y`.
-- Browser and canvas right-click menus are blocked so RMB navigation stays available.
+- Source and food radius/strength controls, with visible point radius scaling up to the full radius range.
+- Material gradient controls, particle/map display toggles, source/food hide toggles, and numbered PNG screenshot export.
+- Serializable history for controls and point edits with `Ctrl+Z` and `Ctrl+Y`.
+- Browser and canvas right-click menus are blocked so RMB orbit navigation remains available.
 
 ## Getting Started
-
-1. Install dependencies with `npm.cmd install`.
-2. Start the local Vite server with `npm.cmd run dev`.
-3. Open the printed localhost URL in a current Chromium-based browser with WebGPU enabled.
-4. Build the production bundle with `npm.cmd run build`.
+1. `npm.cmd install`
+2. `npm.cmd run dev` to start Vite on the printed localhost URL
+3. Open the app in a current Chromium-based browser with WebGPU enabled
+4. `npm.cmd run test` to run the unit tests
+5. `npm.cmd run build` to type-check and emit a production build
 
 ## Controls
+- **Navigation:** Wheel zooms, MMB pans, and RMB orbits the top-down camera.
+- **Simulation:** Start/Pause toggles particle motion, Reset reinitializes the source-seeded trail, Simulation Speed adjusts the Physarum update rate, and Simulation Boundary resizes the active field from 2 to 20 while preserving trail density.
+- **Particles:** Particle Amount resizes the agent count, Particle Size changes the visible dot size, Particle Display hides/shows the agents, and Map Display hides/shows the floor trail map.
+- **Particle behavior:** Turn Rate changes steering response, Sensor Distance changes the forward trail sample range, Trail Deposit changes deposited trail amount, Trail Decay changes trail persistence, Trail Diffusion changes map blur/spread, and Random Drift changes wandering when no strong trail is ahead.
+- **Source editing:** `Shift+LMB` adds a source, `Ctrl+LMB` deletes a source under the cursor, `LMB+Drag` moves a source, Reset Sources restores the seeded source, and Hide Source toggles source dot visibility.
+- **Food editing:** `LMB` adds food, `Ctrl+LMB` deletes food under the cursor, `LMB+Drag` moves food, Reset Food restores the seeded food layout, and Hide Food toggles food dot visibility.
+- **Source/Food parameters:** Source Radius and Food Radius control point influence and visible radius up to 2, while Source Strength and Food Strength control emission/attraction strength.
+- **Material:** Gradient Start colors sources and source-adjacent particles/map cells, Gradient End colors food and food-adjacent particles/map cells, and Gradient Contrast/Bias/Blur tune the floor map display.
+- **History and export:** `Ctrl+Z` undoes point/control edits, `Ctrl+Y` redoes them, and Export Screenshot downloads `260515_SlimeMold_###.png`.
 
-- `Wheel`: Zoom.
-- `MMB`: Pan.
-- `RMB`: Orbit.
-- `Left click`: Add a food dot on the ground plane.
-- `Click and drag source or food`: Move an existing dot on the ground plane.
-- `Shift+Left click`: Add a source dot on the ground plane.
-- `Ctrl+Left click`: Delete an existing source or food dot.
-- `Ctrl+Z`: Undo the previous food or control edit.
-- `Ctrl+Y`: Redo the next food or control edit.
-- `Start` / `Pause`: Toggle particle motion.
-- `Reset`: Stop and reset the particle display.
-- `Simulation Speed`: Adjust the Physarum update rate.
-- `Simulation Boundary`: Resize the simulation boundary from 2 to 20 while preserving the active trail and map density.
-- `Turn Rate`: Adjust how sharply particles steer toward trail and food signals.
-- `Sensor Distance`: Adjust how far particles sample ahead for trail-following.
-- `Trail Deposit`: Adjust how much trail each particle leaves behind.
-- `Trail Decay`: Adjust how long trail values persist.
-- `Trail Diffusion`: Adjust how much trails blur into neighboring map cells.
-- `Random Drift`: Adjust wandering when particles do not find a strong trail ahead.
-- `Particle Display` / `Map Display`: Show or hide the live particle dots and floor map independently.
-- `Reset Sources`: Restore the seeded source layout.
-- `Reset Food`: Restore the seeded food layout.
-- `Source Radius` / `Food Radius`: Adjust point influence and visible radius up to 2.
-- `Hide Source` / `Hide Food`: Hide the source or food dots without removing them.
+## Deployment
+- **Local production preview:** `npm.cmd install`, then `npm.cmd run build` followed by `npm.cmd run preview` to inspect the compiled bundle.
+- **Publish to GitHub Pages:** From a clean `main`, run `npm.cmd run build -- --base ./`. Checkout (or create) the `gh-pages` branch in a separate worktree or temp repo, copy everything inside `dist/` plus a `.nojekyll` marker to its root, keep the flat `assets/`, `env/`, `.gitignore`, `.nojekyll`, and `index.html` structure, commit with a descriptive message, `git push origin gh-pages`, then switch back to `main`.
+- **Live demo:** https://ekimroyrp.github.io/260515_SlimeMold/
