@@ -1,9 +1,9 @@
 # 260515_SlimeMold
 
-260515_SlimeMold is a Vite + TypeScript + Three.js WebGPU slime mold playground that runs a 2D Physarum-style particle simulation on a ground plane. The app uses additive particle dots, a live trail map, editable source and food points, gradient-based source-to-food coloring, undo/redo history, screenshot export, and a compact draggable control panel based on the StrangeAttractor reference project.
+260515_SlimeMold is a Vite + TypeScript + Three.js slime mold playground that runs a 2D Physarum-style particle simulation on a ground plane. The app uses additive particle dots, a live trail map, editable source and food points, gradient-based source-to-food coloring, undo/redo history, screenshot export, and a compact draggable control panel based on the StrangeAttractor reference project.
 
 ## Features
-- WebGPU-only Three.js renderer with transparent additive particle dots and a floor map generated from the same live trail field.
+- Three.js renderer with transparent additive particle dots and a floor map generated from the same live trail field.
 - Physarum-style behavior loop with sensor sampling, turn steering, random drift, trail deposit, diffusion, decay, source emission, and food attraction.
 - Separate Simulation and Particles sections: simulation speed/boundary controls are split from particle amount, size, display, and behavior controls.
 - Behavior sliders for Turn Rate, Sensor Distance, Trail Deposit, Trail Decay, Trail Diffusion, and Random Drift, with defaults matching the original hardcoded simulation.
@@ -17,7 +17,7 @@
 ## Getting Started
 1. `npm.cmd install`
 2. `npm.cmd run dev` to start Vite on the printed localhost URL
-3. Open the app in a current Chromium-based browser with WebGPU enabled
+3. Open the app in the printed localhost URL
 4. `npm.cmd run test` to run the unit tests
 5. `npm.cmd run build` to type-check and emit a production build
 

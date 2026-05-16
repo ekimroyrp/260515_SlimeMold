@@ -79,7 +79,6 @@ type UiRefs = {
   trailDiffusionValue: HTMLSpanElement;
   randomDrift: HTMLInputElement;
   randomDriftValue: HTMLSpanElement;
-  runtimeStats: HTMLDivElement;
   sourceRadius: HTMLInputElement;
   sourceRadiusValue: HTMLSpanElement;
   sourceStrength: HTMLInputElement;
@@ -306,10 +305,6 @@ function formatInteger(value: number): string {
   return `${Math.round(value)}`;
 }
 
-function formatStatsNumber(value: number): string {
-  return Math.round(value).toLocaleString('en-US');
-}
-
 function showWarning(ui: UiRefs, message: string): void {
   ui.webgpuWarning.textContent = message;
   ui.webgpuWarning.hidden = false;
@@ -343,7 +338,6 @@ const ui: UiRefs = {
   trailDiffusionValue: requiredElement('trail-diffusion-value', isSpan),
   randomDrift: requiredElement('random-drift', isInput),
   randomDriftValue: requiredElement('random-drift-value', isSpan),
-  runtimeStats: requiredElement('runtime-stats', isDiv),
   sourceRadius: requiredElement('source-radius', isInput),
   sourceRadiusValue: requiredElement('source-radius-value', isSpan),
   sourceStrength: requiredElement('source-strength', isInput),
@@ -502,8 +496,7 @@ function showParticlesForStart(): void {
   }
 }
 
-function updateStats(fps = 0): void {
-  ui.runtimeStats.textContent = `WebGPU | FPS ${Math.round(fps)} | Particles ${formatStatsNumber(particleSettings.particleAmount)}`;
+function updateStats(): void {
   ui.sourceStats.textContent = `Sources ${sourcePoints.length}`;
   ui.foodStats.textContent = `Food ${foodPoints.length}`;
 }
@@ -1394,10 +1387,6 @@ async function initApp(): Promise<void> {
   handleResize(camera);
 
   let lastTime = performance.now();
-  let fpsAccumulator = 0;
-  let fpsFrames = 0;
-  let fpsValue = 0;
-
   renderer.setAnimationLoop((now) => {
     const delta = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
@@ -1409,15 +1398,6 @@ async function initApp(): Promise<void> {
         particleSystem?.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
       }
       redrawTrailTexture();
-    }
-
-    fpsAccumulator += delta;
-    fpsFrames += 1;
-    if (fpsAccumulator >= 0.25) {
-      fpsValue = fpsFrames / fpsAccumulator;
-      fpsAccumulator = 0;
-      fpsFrames = 0;
-      updateStats(fpsValue);
     }
 
     renderer.render(scene, camera);
