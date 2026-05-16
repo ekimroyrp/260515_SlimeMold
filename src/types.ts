@@ -27,6 +27,12 @@ export type ParticleSettings = {
   particleAmount: number;
   particleSize: number;
   boundary: number;
+  turnRate: number;
+  sensorDistance: number;
+  trailDeposit: number;
+  trailDecay: number;
+  trailDiffusion: number;
+  randomDrift: number;
 };
 
 export type MaterialSettings = {

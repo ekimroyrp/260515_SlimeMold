@@ -35,6 +35,12 @@ function baseState(): SerializableAppState {
       particleAmount: 26000,
       particleSize: 0.03,
       boundary: 10,
+      turnRate: 1.55,
+      sensorDistance: 4.2,
+      trailDeposit: 0.34,
+      trailDecay: 0.978,
+      trailDiffusion: 0.22,
+      randomDrift: 1.8,
     },
     material: {
       gradientStart: '#ff00ae',
@@ -100,6 +106,8 @@ describe('source food color field', () => {
 });
 
 describe('physarum trail simulation', () => {
+  const particleSettings = baseState().particleSettings;
+
   it('scales trail grid resolution with boundary size', () => {
     expect(getTrailGridSize(6)).toBe(DEFAULT_TRAIL_GRID_SIZE);
     expect(getTrailGridSize(8)).toBe(256);
@@ -119,8 +127,8 @@ describe('physarum trail simulation', () => {
     const sourcePoints = createSeedSourcePoints();
     const foodPoints = createSeedFoodPoints();
     const sourceSettings = { radius: 0.42, strength: 1 };
-    simulation.reset(sourcePoints, sourceSettings);
-    simulation.step(1 / 30, sourcePoints, sourceSettings, foodPoints, { radius: 0.42, strength: 1 }, 0.3);
+    simulation.reset(sourcePoints, sourceSettings, particleSettings);
+    simulation.step(1 / 30, sourcePoints, sourceSettings, foodPoints, { radius: 0.42, strength: 1 }, particleSettings);
     const stats = simulation.getTrailStats();
 
     expect(stats.activeCells).toBeGreaterThan(0);
@@ -138,8 +146,8 @@ describe('physarum trail simulation', () => {
     const sourcePoints = createSeedSourcePoints();
     const foodPoints = createSeedFoodPoints();
     const sourceSettings = { radius: 0.42, strength: 1 };
-    simulation.reset(sourcePoints, sourceSettings);
-    simulation.step(1 / 30, sourcePoints, sourceSettings, foodPoints, { radius: 0.42, strength: 1 }, 0.3);
+    simulation.reset(sourcePoints, sourceSettings, particleSettings);
+    simulation.step(1 / 30, sourcePoints, sourceSettings, foodPoints, { radius: 0.42, strength: 1 }, particleSettings);
 
     const resized = simulation.resize({
       agentCount: 900,

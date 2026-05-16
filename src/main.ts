@@ -67,6 +67,18 @@ type UiRefs = {
   particleAmountValue: HTMLSpanElement;
   particleSize: HTMLInputElement;
   particleSizeValue: HTMLSpanElement;
+  turnRate: HTMLInputElement;
+  turnRateValue: HTMLSpanElement;
+  sensorDistance: HTMLInputElement;
+  sensorDistanceValue: HTMLSpanElement;
+  trailDeposit: HTMLInputElement;
+  trailDepositValue: HTMLSpanElement;
+  trailDecay: HTMLInputElement;
+  trailDecayValue: HTMLSpanElement;
+  trailDiffusion: HTMLInputElement;
+  trailDiffusionValue: HTMLSpanElement;
+  randomDrift: HTMLInputElement;
+  randomDriftValue: HTMLSpanElement;
   runtimeStats: HTMLDivElement;
   sourceRadius: HTMLInputElement;
   sourceRadiusValue: HTMLSpanElement;
@@ -319,6 +331,18 @@ const ui: UiRefs = {
   particleAmountValue: requiredElement('particle-amount-value', isSpan),
   particleSize: requiredElement('particle-size', isInput),
   particleSizeValue: requiredElement('particle-size-value', isSpan),
+  turnRate: requiredElement('turn-rate', isInput),
+  turnRateValue: requiredElement('turn-rate-value', isSpan),
+  sensorDistance: requiredElement('sensor-distance', isInput),
+  sensorDistanceValue: requiredElement('sensor-distance-value', isSpan),
+  trailDeposit: requiredElement('trail-deposit', isInput),
+  trailDepositValue: requiredElement('trail-deposit-value', isSpan),
+  trailDecay: requiredElement('trail-decay', isInput),
+  trailDecayValue: requiredElement('trail-decay-value', isSpan),
+  trailDiffusion: requiredElement('trail-diffusion', isInput),
+  trailDiffusionValue: requiredElement('trail-diffusion-value', isSpan),
+  randomDrift: requiredElement('random-drift', isInput),
+  randomDriftValue: requiredElement('random-drift-value', isSpan),
   runtimeStats: requiredElement('runtime-stats', isDiv),
   sourceRadius: requiredElement('source-radius', isInput),
   sourceRadiusValue: requiredElement('source-radius-value', isSpan),
@@ -370,6 +394,12 @@ const particleSettings: ParticleSettings = {
   particleAmount: Number.parseInt(ui.particleAmount.value, 10),
   particleSize: Number.parseFloat(ui.particleSize.value),
   boundary: Number.parseFloat(ui.particleBoundary.value),
+  turnRate: Number.parseFloat(ui.turnRate.value),
+  sensorDistance: Number.parseFloat(ui.sensorDistance.value),
+  trailDeposit: Number.parseFloat(ui.trailDeposit.value),
+  trailDecay: Number.parseFloat(ui.trailDecay.value),
+  trailDiffusion: Number.parseFloat(ui.trailDiffusion.value),
+  randomDrift: Number.parseFloat(ui.randomDrift.value),
 };
 const materialSettings: MaterialSettings = {
   gradientStart: ui.gradientStart.value,
@@ -523,8 +553,8 @@ function rebuildFoodMeshes(): void {
     }
   });
   foodGroup.clear();
-  const foodRadius = Math.max(0.055, Math.min(0.18, foodSettings.radius * 0.28));
-  const sourceRadius = Math.max(0.05, Math.min(0.16, sourceSettings.radius * 0.24));
+  const foodRadius = Math.max(0.055, foodSettings.radius * 0.28);
+  const sourceRadius = Math.max(0.05, sourceSettings.radius * 0.24);
   const addPointMesh = (point: FoodPoint | SourcePoint, radius: number, color: string, kind: string): void => {
     const geometry = new CircleGeometry(radius, 32);
     const outlineGeometry = new RingGeometry(radius * 1.04, radius * 1.22, 32);
@@ -626,7 +656,7 @@ function resizeSimulationPreservingState(): void {
     });
   } else {
     trailSimulation = createPhysarumSimulation();
-    trailSimulation.reset(sourcePoints, sourceSettings);
+    trailSimulation.reset(sourcePoints, sourceSettings, particleSettings);
   }
   updateTrailPlaneGeometry();
   redrawTrailTexture();
@@ -641,7 +671,7 @@ function resizeSimulationPreservingState(): void {
 
 function rebuildSlimeField(resetTrail = true, stepWhenPaused = true): void {
   if (resetTrail) {
-    trailSimulation?.reset(sourcePoints, sourceSettings);
+    trailSimulation?.reset(sourcePoints, sourceSettings, particleSettings);
   }
 
   if (trailPlane) {
@@ -659,7 +689,10 @@ function rebuildSlimeField(resetTrail = true, stepWhenPaused = true): void {
     particleSystem.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
   }
   if (stepWhenPaused && !runtimeSettings.running && !particlesCleared) {
-    trailSimulation?.step(1 / 60, sourcePoints, sourceSettings, foodPoints, foodSettings, 0.5);
+    trailSimulation?.step(1 / 60, sourcePoints, sourceSettings, foodPoints, foodSettings, {
+      ...particleSettings,
+      simulationRate: 0.5,
+    });
     if (trailSimulation) {
       particleSystem?.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
     }
@@ -677,6 +710,12 @@ function syncStaticControlsFromState(): void {
   setRangeValue(ui.particleBoundary, ui.particleBoundaryValue, particleSettings.boundary, formatFixed(1));
   setRangeValue(ui.particleAmount, ui.particleAmountValue, particleSettings.particleAmount, formatInteger);
   setRangeValue(ui.particleSize, ui.particleSizeValue, particleSettings.particleSize, formatFixed(3));
+  setRangeValue(ui.turnRate, ui.turnRateValue, particleSettings.turnRate, formatFixed(2));
+  setRangeValue(ui.sensorDistance, ui.sensorDistanceValue, particleSettings.sensorDistance, formatFixed(1));
+  setRangeValue(ui.trailDeposit, ui.trailDepositValue, particleSettings.trailDeposit, formatFixed(2));
+  setRangeValue(ui.trailDecay, ui.trailDecayValue, particleSettings.trailDecay, formatFixed(3));
+  setRangeValue(ui.trailDiffusion, ui.trailDiffusionValue, particleSettings.trailDiffusion, formatFixed(2));
+  setRangeValue(ui.randomDrift, ui.randomDriftValue, particleSettings.randomDrift, formatFixed(2));
   setRangeValue(ui.sourceRadius, ui.sourceRadiusValue, sourceSettings.radius, formatFixed(2));
   setRangeValue(ui.sourceStrength, ui.sourceStrengthValue, sourceSettings.strength, formatFixed(2));
   setRangeValue(ui.foodRadius, ui.foodRadiusValue, foodSettings.radius, formatFixed(2));
@@ -703,6 +742,12 @@ function applySerializableState(state: SerializableAppState): void {
   particleSettings.particleAmount = state.particleSettings.particleAmount;
   particleSettings.particleSize = state.particleSettings.particleSize;
   particleSettings.boundary = state.particleSettings.boundary;
+  particleSettings.turnRate = state.particleSettings.turnRate;
+  particleSettings.sensorDistance = state.particleSettings.sensorDistance;
+  particleSettings.trailDeposit = state.particleSettings.trailDeposit;
+  particleSettings.trailDecay = state.particleSettings.trailDecay;
+  particleSettings.trailDiffusion = state.particleSettings.trailDiffusion;
+  particleSettings.randomDrift = state.particleSettings.randomDrift;
   materialSettings.gradientStart = state.material.gradientStart;
   materialSettings.gradientEnd = state.material.gradientEnd;
   materialSettings.gradientContrast = state.material.gradientContrast;
@@ -839,6 +884,60 @@ function bindStaticControls(): void {
     commitHistoryIfChanged,
   );
   bindRange(
+    ui.turnRate,
+    ui.turnRateValue,
+    formatFixed(2),
+    (value) => {
+      particleSettings.turnRate = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.sensorDistance,
+    ui.sensorDistanceValue,
+    formatFixed(1),
+    (value) => {
+      particleSettings.sensorDistance = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.trailDeposit,
+    ui.trailDepositValue,
+    formatFixed(2),
+    (value) => {
+      particleSettings.trailDeposit = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.trailDecay,
+    ui.trailDecayValue,
+    formatFixed(3),
+    (value) => {
+      particleSettings.trailDecay = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.trailDiffusion,
+    ui.trailDiffusionValue,
+    formatFixed(2),
+    (value) => {
+      particleSettings.trailDiffusion = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
+    ui.randomDrift,
+    ui.randomDriftValue,
+    formatFixed(2),
+    (value) => {
+      particleSettings.randomDrift = value;
+    },
+    commitHistoryIfChanged,
+  );
+  bindRange(
     ui.sourceRadius,
     ui.sourceRadiusValue,
     formatFixed(2),
@@ -953,7 +1052,7 @@ function bindStaticControls(): void {
   });
   ui.reset.addEventListener('click', () => {
     stopSimulation();
-    trailSimulation?.reset(sourcePoints, sourceSettings);
+    trailSimulation?.reset(sourcePoints, sourceSettings, particleSettings);
     if (trailSimulation) {
       particleSystem?.reset(trailSimulation, sourcePoints, foodPoints, materialSettings);
     }
@@ -1260,7 +1359,7 @@ async function initApp(): Promise<void> {
 
   trailTexture = createTrailTexture();
   trailSimulation = createPhysarumSimulation();
-  trailSimulation.reset(sourcePoints, sourceSettings);
+  trailSimulation.reset(sourcePoints, sourceSettings, particleSettings);
   const trailMaterial = new MeshBasicMaterial({
     map: trailTexture,
     transparent: true,
@@ -1305,7 +1404,7 @@ async function initApp(): Promise<void> {
     controls.update();
 
     if (runtimeSettings.running) {
-      trailSimulation?.step(delta, sourcePoints, sourceSettings, foodPoints, foodSettings, particleSettings.simulationRate);
+      trailSimulation?.step(delta, sourcePoints, sourceSettings, foodPoints, foodSettings, particleSettings);
       if (trailSimulation) {
         particleSystem?.updateFromSimulation(trailSimulation, sourcePoints, foodPoints, materialSettings);
       }

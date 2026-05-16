@@ -10,7 +10,9 @@
 - Left-click food placement, `Shift+LMB` source placement, and `Ctrl+LMB` point deletion.
 - Add, delete, and drag source/food points without restarting the active simulation.
 - Source dots use the gradient start color, food dots use the gradient end color, and particles/map cells blend by nearest source-vs-food distance.
-- Particle boundary, source radius/strength, and food radius/strength controls.
+- Simulation speed/boundary, particle amount/size, and particle behavior controls.
+- Turn rate, sensor distance, trail deposit, trail decay, trail diffusion, and random drift controls.
+- Source radius/strength and food radius/strength controls.
 - Material gradient controls, particle/map display toggles, source/food hide toggles, and PNG screenshot export.
 - Undo and redo for simulation controls and food edits with `Ctrl+Z` and `Ctrl+Y`.
 - Browser and canvas right-click menus are blocked so RMB navigation stays available.
@@ -35,8 +37,16 @@
 - `Ctrl+Y`: Redo the next food or control edit.
 - `Start` / `Pause`: Toggle particle motion.
 - `Reset`: Stop and reset the particle display.
+- `Simulation Speed`: Adjust the Physarum update rate.
+- `Simulation Boundary`: Resize the simulation boundary from 2 to 20 while preserving the active trail and map density.
+- `Turn Rate`: Adjust how sharply particles steer toward trail and food signals.
+- `Sensor Distance`: Adjust how far particles sample ahead for trail-following.
+- `Trail Deposit`: Adjust how much trail each particle leaves behind.
+- `Trail Decay`: Adjust how long trail values persist.
+- `Trail Diffusion`: Adjust how much trails blur into neighboring map cells.
+- `Random Drift`: Adjust wandering when particles do not find a strong trail ahead.
 - `Particle Display` / `Map Display`: Show or hide the live particle dots and floor map independently.
-- `Particle Boundary`: Resize the simulation boundary from 2 to 20 while preserving the active trail and map density.
 - `Reset Sources`: Restore the seeded source layout.
 - `Reset Food`: Restore the seeded food layout.
+- `Source Radius` / `Food Radius`: Adjust point influence and visible radius up to 2.
 - `Hide Source` / `Hide Food`: Hide the source or food dots without removing them.

@@ -1,5 +1,5 @@
 import { clamp01, getSourceFoodBlend, interpolateRgb, parseHexColor } from './colorField';
-import type { FoodPoint, FoodSettings, MaterialSettings, SourcePoint, SourceSettings } from '../types';
+import type { FoodPoint, FoodSettings, MaterialSettings, ParticleSettings, SourcePoint, SourceSettings } from '../types';
 
 export type PhysarumOptions = {
   agentCount: number;
@@ -20,6 +20,37 @@ const TURN_RATE = 1.55;
 const DEPOSIT_AMOUNT = 0.34;
 const DIFFUSION_RATE = 0.22;
 const DECAY_RATE = 0.978;
+const RANDOM_DRIFT = 1.8;
+
+type BehaviorSettings = Pick<
+  ParticleSettings,
+  'simulationRate' | 'turnRate' | 'sensorDistance' | 'trailDeposit' | 'trailDecay' | 'trailDiffusion' | 'randomDrift'
+>;
+
+const DEFAULT_BEHAVIOR: BehaviorSettings = {
+  simulationRate: 0.3,
+  turnRate: TURN_RATE,
+  sensorDistance: SENSOR_DISTANCE_CELLS,
+  trailDeposit: DEPOSIT_AMOUNT,
+  trailDecay: DECAY_RATE,
+  trailDiffusion: DIFFUSION_RATE,
+  randomDrift: RANDOM_DRIFT,
+};
+
+function resolveBehavior(settings?: BehaviorSettings): BehaviorSettings {
+  if (!settings) {
+    return DEFAULT_BEHAVIOR;
+  }
+  return {
+    simulationRate: settings.simulationRate,
+    turnRate: settings.turnRate,
+    sensorDistance: settings.sensorDistance,
+    trailDeposit: settings.trailDeposit,
+    trailDecay: settings.trailDecay,
+    trailDiffusion: settings.trailDiffusion,
+    randomDrift: settings.randomDrift,
+  };
+}
 
 function createRandom(seed: number): () => number {
   let value = seed >>> 0;
@@ -93,15 +124,16 @@ export class PhysarumSimulation {
     }
   }
 
-  reset(sourcePoints: SourcePoint[], sourceSettings: SourceSettings): void {
+  reset(sourcePoints: SourcePoint[], sourceSettings: SourceSettings, particleSettings?: BehaviorSettings): void {
+    const behavior = resolveBehavior(particleSettings);
     this.trail.fill(0);
     for (let i = 0; i < this.agentCount; i += 1) {
       const anchor = sourcePoints.length > 0 ? sourcePoints[i % sourcePoints.length] : null;
       this.placeAgentAtSource(i, anchor, sourceSettings);
-      this.deposit(this.agentX[i], this.agentZ[i], DEPOSIT_AMOUNT * Math.max(0.2, sourceSettings.strength) * 1.6);
+      this.deposit(this.agentX[i], this.agentZ[i], behavior.trailDeposit * Math.max(0.2, sourceSettings.strength) * 1.6);
     }
     this.emissionCursor = 0;
-    this.diffuseAndDecay();
+    this.diffuseAndDecay(behavior);
   }
 
   step(
@@ -110,15 +142,17 @@ export class PhysarumSimulation {
     sourceSettings: SourceSettings,
     foodPoints: FoodPoint[],
     foodSettings: FoodSettings,
-    speedScale: number,
+    particleSettings: BehaviorSettings,
   ): void {
+    const behavior = resolveBehavior(particleSettings);
+    const speedScale = behavior.simulationRate;
     const dt = Math.min(1 / 20, Math.max(1 / 240, deltaSeconds));
     const substeps = Math.max(1, Math.min(4, Math.ceil(dt * 90 * Math.max(0.5, speedScale))));
     const stepDt = dt / substeps;
     for (let i = 0; i < substeps; i += 1) {
-      this.emitFromSources(stepDt, sourcePoints, sourceSettings);
-      this.stepAgents(stepDt, foodPoints, foodSettings, speedScale);
-      this.diffuseAndDecay();
+      this.emitFromSources(stepDt, sourcePoints, sourceSettings, behavior);
+      this.stepAgents(stepDt, foodPoints, foodSettings, behavior);
+      this.diffuseAndDecay(behavior);
     }
   }
 
@@ -227,7 +261,12 @@ export class PhysarumSimulation {
     return top * (1 - ty) + bottom * ty;
   }
 
-  private emitFromSources(deltaSeconds: number, sourcePoints: SourcePoint[], sourceSettings: SourceSettings): void {
+  private emitFromSources(
+    deltaSeconds: number,
+    sourcePoints: SourcePoint[],
+    sourceSettings: SourceSettings,
+    behavior: BehaviorSettings,
+  ): void {
     if (sourcePoints.length === 0 || sourceSettings.strength <= 0) {
       return;
     }
@@ -236,31 +275,32 @@ export class PhysarumSimulation {
       const agentIndex = this.emissionCursor % this.agentCount;
       const source = sourcePoints[this.emissionCursor % sourcePoints.length];
       this.placeAgentAtSource(agentIndex, source, sourceSettings);
-      this.deposit(this.agentX[agentIndex], this.agentZ[agentIndex], DEPOSIT_AMOUNT * sourceSettings.strength);
+      this.deposit(this.agentX[agentIndex], this.agentZ[agentIndex], behavior.trailDeposit * sourceSettings.strength);
       this.emissionCursor += 1;
     }
   }
 
-  private stepAgents(deltaSeconds: number, foodPoints: FoodPoint[], foodSettings: FoodSettings, speedScale: number): void {
+  private stepAgents(deltaSeconds: number, foodPoints: FoodPoint[], foodSettings: FoodSettings, behavior: BehaviorSettings): void {
     const half = this.groundSize * 0.5;
+    const speedScale = behavior.simulationRate;
     const moveDistance = deltaSeconds * (0.32 + speedScale * 0.42);
-    const turnDistance = TURN_RATE * deltaSeconds * (0.8 + speedScale * 0.15);
+    const turnDistance = behavior.turnRate * deltaSeconds * (0.8 + speedScale * 0.15);
     const foodRadiusSq = Math.max(0.01, foodSettings.radius * foodSettings.radius);
 
     for (let i = 0; i < this.agentCount; i += 1) {
       let angle = this.agentAngle[i];
       const x = this.agentX[i];
       const z = this.agentZ[i];
-      const forward = this.sampleSensor(x, z, angle);
-      const left = this.sampleSensor(x, z, angle + SENSOR_ANGLE);
-      const right = this.sampleSensor(x, z, angle - SENSOR_ANGLE);
+      const forward = this.sampleSensor(x, z, angle, behavior.sensorDistance);
+      const left = this.sampleSensor(x, z, angle + SENSOR_ANGLE, behavior.sensorDistance);
+      const right = this.sampleSensor(x, z, angle - SENSOR_ANGLE, behavior.sensorDistance);
 
       if (left > forward && left > right) {
         angle += turnDistance;
       } else if (right > forward && right > left) {
         angle -= turnDistance;
       } else if (forward < 0.08) {
-        angle += (this.random() - 0.5) * turnDistance * 1.8;
+        angle += (this.random() - 0.5) * turnDistance * behavior.randomDrift;
       }
 
       if (foodPoints.length > 0 && foodSettings.strength > 0) {
@@ -300,14 +340,14 @@ export class PhysarumSimulation {
       this.agentX[i] = nextX;
       this.agentZ[i] = nextZ;
       this.agentAngle[i] = angle;
-      this.deposit(nextX, nextZ, DEPOSIT_AMOUNT);
+      this.deposit(nextX, nextZ, behavior.trailDeposit);
     }
   }
 
-  private sampleSensor(x: number, z: number, angle: number): number {
+  private sampleSensor(x: number, z: number, angle: number, sensorDistance = SENSOR_DISTANCE_CELLS): number {
     const [gridX, gridY] = this.worldToGrid(
-      x + Math.cos(angle) * (SENSOR_DISTANCE_CELLS / this.gridSize) * this.groundSize,
-      z + Math.sin(angle) * (SENSOR_DISTANCE_CELLS / this.gridSize) * this.groundSize,
+      x + Math.cos(angle) * (sensorDistance / this.gridSize) * this.groundSize,
+      z + Math.sin(angle) * (sensorDistance / this.gridSize) * this.groundSize,
     );
     let sum = 0;
     for (let oy = -1; oy <= 1; oy += 1) {
@@ -324,7 +364,7 @@ export class PhysarumSimulation {
     this.trail[index] = Math.min(1, this.trail[index] + amount);
   }
 
-  private diffuseAndDecay(): void {
+  private diffuseAndDecay(behavior: BehaviorSettings = DEFAULT_BEHAVIOR): void {
     let activeCells = 0;
     let sum = 0;
     for (let y = 0; y < this.gridSize; y += 1) {
@@ -346,7 +386,10 @@ export class PhysarumSimulation {
           this.trail[down + x] +
           this.trail[down + right]
         ) / 9;
-        const nextValue = (this.trail[index] + (average - this.trail[index]) * DIFFUSION_RATE) * DECAY_RATE;
+        const nextValue = (
+          this.trail[index] +
+          (average - this.trail[index]) * behavior.trailDiffusion
+        ) * behavior.trailDecay;
         this.nextTrail[index] = nextValue;
         if (nextValue > 0.05) {
           activeCells += 1;

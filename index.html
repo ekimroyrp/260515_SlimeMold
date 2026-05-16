@@ -39,7 +39,7 @@
 
         <section class="panel-section">
           <div class="panel-section-header">
-            <span class="panel-section-label">Particles</span>
+            <span class="panel-section-label">Simulation</span>
           </div>
           <div class="panel-section-content panel-controls-stack">
             <div id="runtime-stats" class="runtime-stats">WebGPU | FPS 0 | Particles 26000</div>
@@ -49,6 +49,29 @@
               <button type="button" id="reset-sim" class="pill-button control-button-wide">Reset</button>
             </div>
 
+            <label class="control">
+              <div class="control-row">
+                <span>Simulation Speed</span>
+                <span id="simulation-rate-value">0.30</span>
+              </div>
+              <input type="range" id="simulation-rate" min="0.05" max="8" step="0.01" value="0.3" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Simulation Boundary</span>
+                <span id="particle-boundary-value">10.0</span>
+              </div>
+              <input type="range" id="particle-boundary" min="2" max="20" step="0.1" value="10" />
+            </label>
+          </div>
+        </section>
+
+        <section class="panel-section">
+          <div class="panel-section-header">
+            <span class="panel-section-label">Particles</span>
+          </div>
+          <div class="panel-section-content panel-controls-stack">
             <label class="control">
               <div class="control-row">
                 <span>Particle Amount</span>
@@ -67,18 +90,50 @@
 
             <label class="control">
               <div class="control-row">
-                <span>Particle Speed</span>
-                <span id="simulation-rate-value">0.30</span>
+                <span>Turn Rate</span>
+                <span id="turn-rate-value">1.55</span>
               </div>
-              <input type="range" id="simulation-rate" min="0.05" max="8" step="0.01" value="0.3" />
+              <input type="range" id="turn-rate" min="0" max="4" step="0.01" value="1.55" />
             </label>
 
             <label class="control">
               <div class="control-row">
-                <span>Particle Boundary</span>
-                <span id="particle-boundary-value">10.0</span>
+                <span>Sensor Distance</span>
+                <span id="sensor-distance-value">4.2</span>
               </div>
-              <input type="range" id="particle-boundary" min="2" max="20" step="0.1" value="10" />
+              <input type="range" id="sensor-distance" min="1" max="12" step="0.1" value="4.2" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Deposit</span>
+                <span id="trail-deposit-value">0.34</span>
+              </div>
+              <input type="range" id="trail-deposit" min="0.01" max="1" step="0.01" value="0.34" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Decay</span>
+                <span id="trail-decay-value">0.978</span>
+              </div>
+              <input type="range" id="trail-decay" min="0.9" max="0.999" step="0.001" value="0.978" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Trail Diffusion</span>
+                <span id="trail-diffusion-value">0.22</span>
+              </div>
+              <input type="range" id="trail-diffusion" min="0" max="1" step="0.01" value="0.22" />
+            </label>
+
+            <label class="control">
+              <div class="control-row">
+                <span>Random Drift</span>
+                <span id="random-drift-value">1.80</span>
+              </div>
+              <input type="range" id="random-drift" min="0" max="4" step="0.01" value="1.8" />
             </label>
 
             <div class="control display-toggle-row">
@@ -107,7 +162,7 @@
                 <span>Source Radius</span>
                 <span id="source-radius-value">0.42</span>
               </div>
-              <input type="range" id="source-radius" min="0.12" max="1.4" step="0.01" value="0.42" />
+              <input type="range" id="source-radius" min="0.12" max="2" step="0.01" value="0.42" />
             </label>
 
             <label class="control">
@@ -143,7 +198,7 @@
                 <span>Food Radius</span>
                 <span id="food-radius-value">0.42</span>
               </div>
-              <input type="range" id="food-radius" min="0.12" max="1.4" step="0.01" value="0.42" />
+              <input type="range" id="food-radius" min="0.12" max="2" step="0.01" value="0.42" />
             </label>
 
             <label class="control">
